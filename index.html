@@ -265,9 +265,10 @@
 <script>
 (()=>{
 "use strict";
-const VERSION='1.5.0';   // 表示用
+const VERSION='1.6.0';   // 表示用
 const SCHEMA=3;          // データ構造の版。移行判定に使う
 const CHANGES=[
+  ['1.6.0','取り込み時に作品番号から表紙を探せるように。表紙のない作品を順に片付ける画面を追加。'],
   ['1.5.0','同人を独立したタブに分離。表紙を隠さない表示に変更。タブを大きく。DLsite の作品番号から表紙を探せるように。'],
   ['1.4.0','記録を話数順に並べ替え。選んだ話の記録だけを表示できるように。'],
   ['1.3.0','まとめて削除を追加。直前の取り込みの取り消し、絞り込み範囲の削除、全削除。'],
@@ -1023,7 +1024,8 @@ const GUESS={
   rating:[/rating/i,/score/i,/star/i,/評価/,/点数/,/星/],
   year:[/year/i,/release/i,/公開/,/放送/,/発売/,/^年/,/日付/,/date/i],
   maker:[/maker/i,/circle/i,/studio/i,/author/i,/creator/i,/brand/i,/サークル/,/制作/,/作者/,/メーカー/],
-  cat:[/categor/i,/^type$/i,/genre/i,/media/i,/分類/,/種別/,/媒体/,/ジャンル/]
+  cat:[/categor/i,/^type$/i,/genre/i,/media/i,/分類/,/種別/,/媒体/,/ジャンル/],
+  rj:[/^rj/i,/dlsite/i,/作品番号/,/品番/,/^code$/i,/商品id/i]
 };
 function guessColumn(cols,field){
   for(const re of GUESS[field]||[]) { const hit=cols.find(c=>re.test(c)); if(hit) return hit; }
@@ -1176,7 +1178,8 @@ function openImportMapper(records,label){
     ['review','総評・感想',''],
     ['cover','表紙の画像URL',''],
     ['maker','サークル・制作',''],
-    ['year','年','']
+    ['year','年',''],
+    ['rj','DLsite の作品番号','RJ番号があれば表紙を探せます']
   ];
   const opt=sel=>['<option value="">— 使わない —</option>']
     .concat(cols.map(c=>`<option value="${esc(c)}"${c===sel?' selected':''}>${esc(c)}</option>`)).join('');
@@ -1215,13 +1218,15 @@ function openImportMapper(records,label){
       const title=String(m.title? r[m.title]??'' : '').trim();
       if(!title) return null;
       const cat = m.cat? guessCat(r[m.cat],fb) : fb;
-      const cover=String(m.cover? r[m.cover]??'' : '').trim();
+      const rawCover=String(m.cover? r[m.cover]??'' : '').trim();
+      const urlInCell=(rawCover.match(/https?:\/\/\S+/)||[])[0]||'';
+      const rj=String(m.rj? r[m.rj]??'' : '').trim();
       return {
         title, cat,
         status: m.status? guessStatus(r[m.status]) : 'want',
         rating: m.rating? normRating(r[m.rating]) : 0,
         review: String(m.review? r[m.review]??'' : '').trim(),
-        cover: /^https?:\/\//i.test(cover)? cover : '',
+        cover: urlInCell, rj,
         maker: String(m.maker? r[m.maker]??'' : '').trim(),
         year: m.year? normYear(r[m.year]) : '',
         adult: ad==='all'? true : ad==='none'? false : cat==='doujin'
@@ -1233,13 +1238,17 @@ function openImportMapper(records,label){
     const box=$('#preview');
     if(!built.length){ box.innerHTML='<div class="hint" style="color:var(--seal)">タイトルの列を選んでください。</div>'; return; }
     const withCover=built.filter(b=>b.cover).length;
+    const withRj=built.filter(b=>!b.cover&&b.rj&&dlsiteCovers(b.rj).length).length;
     box.innerHTML=`<div class="sectitle">確認<span>最初の3件</span></div>`
       + built.slice(0,3).map(b=>`<div style="font-size:12.5px;line-height:1.7;padding:5px 0;border-bottom:1px solid var(--line)">
           <b style="font-weight:400">${esc(b.title)}</b>
           <div style="color:var(--paper-dim);font-size:11px">${esc(CATS[b.cat])} · ${esc(({want:'これから',watching:'見てる',done:'見た',paused:'中断',dropped:'やめた'})[b.status])}${b.rating?' · ★'+b.rating:''}${b.year?' · '+esc(b.year):''}${b.cover?' · 表紙あり':''}</div>
           ${b.review?`<div style="color:#6C7686;font-size:11px;margin-top:2px">${esc(b.review.slice(0,50))}${b.review.length>50?'…':''}</div>`:''}
         </div>`).join('')
-      + `<div class="hint">取り込む件数 ${built.length} 件　表紙の付くもの ${withCover} 件</div>`;
+      + `<div class="hint">取り込む件数 ${built.length} 件　表紙の付くもの ${withCover} 件`
+      + (withRj? `　作品番号から探せるもの ${withRj} 件`:'')
+      + (built.length-withCover-withRj>0? `<br>残り ${built.length-withCover-withRj} 件は表紙なしで入ります。あとから ⚙ の「表紙をまとめて付ける」で足せます。`:'')
+      + `</div>`;
   };
   F.forEach(([k])=>$('#map_'+k).onchange=paintPreview);
   $('#defCat').onclick=e=>{const b=e.target.closest('button');if(!b)return;
@@ -1252,6 +1261,19 @@ function openImportMapper(records,label){
     const batch='b'+Date.now();
     const built=build();
     if(!built.length){ toast('タイトルの列を選んでください'); return; }
+
+    // 作品番号がある行は表紙を探しに行く
+    const needs=built.filter(b=>!b.cover&&b.rj&&dlsiteCovers(b.rj).length);
+    if(needs.length){
+      const btn=$('#doImport'); btn.disabled=true;
+      for(let i=0;i<needs.length;i+=4){
+        btn.innerHTML=`<span class="spin"></span> 表紙を探しています… ${Math.min(i+4,needs.length)}/${needs.length}`;
+        await Promise.all(needs.slice(i,i+4).map(async b=>{
+          b.cover = await firstLoadable(dlsiteCovers(b.rj));
+        }));
+      }
+      btn.disabled=false; btn.textContent='この対応で取り込む';
+    }
     const have=new Set(works.map(w=>w.title.trim().toLowerCase()));
     let added=0, skipped=0;
     for(const b of built){
@@ -1303,6 +1325,93 @@ async function restoreOwnBackup(arr){
   await saveWorks(); await saveSettings(); closeSheet(); render(); toast(arr.length+'件を復元しました');
 }
 
+
+/* ---------- 表紙をまとめて付ける ---------- */
+function openCoverFiller(){
+  const queue=works.filter(w=>!w.cover);
+  if(!queue.length){ toast('表紙のない作品はありません'); return; }
+  let i=0;
+
+  const draw=async()=>{
+    if(i>=queue.length){
+      openSheet('表紙をまとめて付ける',
+        `<div class="hint" style="margin-top:0">ひととおり終わりました。</div>
+         <div style="height:14px"></div><button class="btn" id="fin">閉じる</button>`);
+      $('#fin').onclick=()=>{closeSheet();render();};
+      return;
+    }
+    const w=queue[i];
+    const rest=works.filter(x=>!x.cover).length;
+    openSheet('表紙をまとめて付ける',`
+      <div class="hint" style="margin-top:0">残り <b>${rest}</b> 件　（${i+1} / ${queue.length}）</div>
+      <div class="prog" style="margin:9px 0 16px"><i style="width:${i/queue.length*100}%"></i></div>
+
+      <div style="display:flex;gap:14px;align-items:flex-start">
+        <div class="mcover" id="cfPreview" style="margin:0;flex:0 0 96px"><span>まだ何も</span></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-family:var(--mincho);font-size:16px;line-height:1.45">${esc(w.title)}</div>
+          <div class="meta" style="margin-top:5px">${esc([CATS[w.cat],w.maker,w.year].filter(Boolean).join(' · '))}</div>
+        </div></div>
+
+      <label class="f">DLsite の作品番号から</label>
+      <div class="row"><input class="in" id="cfRj" placeholder="RJ01234567" autocapitalize="characters"
+        inputmode="text"><button class="btn ghost" id="cfRjGo" style="flex:0 0 78px">試す</button></div>
+
+      <label class="f">画像の URL を貼る</label>
+      <div class="row"><input class="in" id="cfUrl" placeholder="https://…">
+        <button class="btn ghost" id="cfUrlGo" style="flex:0 0 78px">試す</button></div>
+
+      <label class="f">端末の写真から</label>
+      <input type="file" accept="image/*" id="cfFile" class="in">
+
+      <div class="divider"></div>
+      <button class="btn" id="cfSave" disabled>この表紙で決定して次へ</button>
+      <div style="height:8px"></div>
+      <div class="row">
+        <button class="btn ghost" id="cfSkip">とばす</button>
+        <button class="btn ghost" id="cfQuit">やめる</button></div>
+    `);
+
+    let url='', data='';
+    const prev=$('#cfPreview');
+    const show=(src,label)=>{
+      prev.innerHTML = src? `<img src="${esc(src)}" referrerpolicy="no-referrer" alt=""><span>${esc(label)}</span>`
+                          : '<span>まだ何も</span>';
+      $('#cfSave').disabled = !src;
+    };
+    $('#cfRjGo').onclick=async()=>{
+      const c=dlsiteCovers($('#cfRj').value);
+      if(!c.length){toast('RJ番号を入れてください');return;}
+      prev.innerHTML='<span><span class="spin"></span> 探しています…</span>';
+      const hit=await firstLoadable(c);
+      if(hit){url=hit;data='';show(hit,'DLsite から');}
+      else{show('','');toast('見つかりませんでした');}
+    };
+    $('#cfUrlGo').onclick=async()=>{
+      const u=$('#cfUrl').value.trim();
+      if(!/^https?:\/\//i.test(u)){toast('http から始まる URL を入れてください');return;}
+      prev.innerHTML='<span><span class="spin"></span> 確認しています…</span>';
+      const hit=await firstLoadable([u]);
+      if(hit){url=hit;data='';show(hit,'URL から');}
+      else{show('','');toast('この URL は表示できませんでした');}
+    };
+    $('#cfFile').onchange=async e=>{
+      const f=e.target.files[0]; if(!f)return;
+      data=await shrink(f); url=''; show(data,'端末内に保存');
+    };
+    $('#cfSave').onclick=async()=>{
+      if(data){ await sset('shoko:img:'+w.id,data); imgCache.set(w.id,data); w.cover='local:'+w.id; }
+      else if(url){ w.cover=url; }
+      w.updatedAt=Date.now();
+      await saveWorks(); render();
+      i++; draw();
+    };
+    $('#cfSkip').onclick=()=>{ i++; draw(); };
+    $('#cfQuit').onclick=()=>{ closeSheet(); render(); };
+  };
+  draw();
+}
+
 /* ---------- settings ---------- */
 function openSettings(){
   openSheet('設定',`
@@ -1323,6 +1432,8 @@ function openSettings(){
     <div class="hint">書き出しには手で入れた表紙画像も含まれます。読み込みは既存データに追加されます。</div>
     <div style="height:14px"></div>
     <button class="btn ghost" id="impOther">ほかのアプリから取り込む（JSON / CSV）</button>
+    <div style="height:8px"></div>
+    <button class="btn ghost" id="coverFill">表紙をまとめて付ける（${works.filter(w=>!w.cover).length}件）</button>
     <input type="file" id="imp" accept=".json,.csv,.tsv,application/json,text/csv" style="display:none">
     <div class="hint">AppSheet はスプレッドシートを CSV で書き出せば取り込めます。
       どの列が何なのかは、次の画面で対応づけます。</div>
@@ -1442,6 +1553,7 @@ function openSettings(){
     await saveSettings(); paintBackupBar(); toast('書き出しました');};
   $('#impBtn').onclick=()=>{$('#imp').dataset.mode='own';$('#imp').click();};
   $('#impOther').onclick=()=>{$('#imp').dataset.mode='other';$('#imp').click();};
+  $('#coverFill').onclick=openCoverFiller;
   $('#imp').onchange=async e=>{
     const f=e.target.files[0]; e.target.value=''; if(!f)return;
     await readImportFile(f);};

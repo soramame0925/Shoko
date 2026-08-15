@@ -2,7 +2,7 @@
    アプリ本体だけをキャッシュする。作品データは IndexedDB にあるので触らない。
    TMDB / AniList への通信は常にネットワークへ行く（古い結果を返さないため）。 */
 
-const CACHE = "shoko-v1.5.0";
+const CACHE = "shoko-v1.6.0";
 const SHELL = [
   './',
   './index.html',
