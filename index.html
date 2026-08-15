@@ -96,8 +96,6 @@
   .cover.st-want.blur img,.cover.st-paused.blur img,.cover.st-dropped.blur img{filter:blur(13px) brightness(.45) saturate(.5)}
   .rbadge{position:absolute;top:0;left:0;background:linear-gradient(135deg,rgba(12,16,23,.9) 55%,transparent 55%);
           color:var(--brass);font-size:11px;padding:3px 12px 8px 5px;letter-spacing:.02em;line-height:1;font-weight:700}
-  .epbadge{position:absolute;bottom:9px;right:5px;background:rgba(12,16,23,.86);border:1px solid var(--brass-dim);
-           color:var(--brass);font-size:10.5px;padding:2px 6px;border-radius:2px;letter-spacing:.02em;font-weight:700}
 
   .empty{margin-top:56px;text-align:center;color:var(--paper-dim)}
   .empty .k{font-family:var(--mincho);font-size:34px;color:#2E3948;letter-spacing:.3em}
@@ -198,8 +196,6 @@
   .eptitle{font-size:12px;color:var(--paper);background:var(--panel);border:1px solid var(--line);
            border-radius:var(--r);padding:7px 10px;line-height:1.5;margin-bottom:8px}
   .eptitle b{color:var(--brass);font-weight:400;font-family:var(--mincho);margin-right:7px}
-  .epbadge{position:absolute;top:5px;right:5px;background:rgba(12,16,23,.82);border:1px solid #485468;
-           color:var(--paper-dim);font-size:10px;padding:1px 5px;border-radius:2px;letter-spacing:.02em}
   .sectitle{font-family:var(--mincho);font-size:15px;letter-spacing:.1em;margin:0 0 10px;
             display:flex;align-items:baseline;gap:9px;border-left:2px solid var(--brass);padding-left:9px}
   .sectitle span{font-family:var(--gothic);font-size:10.5px;letter-spacing:0;color:#6C7686;font-weight:400}
@@ -265,9 +261,10 @@
 <script>
 (()=>{
 "use strict";
-const VERSION='1.6.0';   // 表示用
+const VERSION='1.7.0';   // 表示用
 const SCHEMA=3;          // データ構造の版。移行判定に使う
 const CHANGES=[
+  ['1.7.0','スクショの貼り付けと、共有メニューからの画像受け取りに対応。表紙をあとから変えられるように。話数バッジを廃止。'],
   ['1.6.0','取り込み時に作品番号から表紙を探せるように。表紙のない作品を順に片付ける画面を追加。'],
   ['1.5.0','同人を独立したタブに分離。表紙を隠さない表示に変更。タブを大きく。DLsite の作品番号から表紙を探せるように。'],
   ['1.4.0','記録を話数順に並べ替え。選んだ話の記録だけを表示できるように。'],
@@ -405,12 +402,6 @@ async function cardEl(w){
     im.referrerPolicy='no-referrer';b.appendChild(im);}
   else{const n=el('div','noimg');n.textContent=w.title;b.appendChild(n);}
   if(w.rating){const r=el('div','rbadge');r.textContent='★'+w.rating;b.appendChild(r);}
-  const eps=(w.episodes||[]).length;
-  if(eps){
-    const seen=new Set((w.logs||[]).map(l=>l.epKey).filter(Boolean)).size;
-    if(seen<eps || w.status==='watching'){
-      const p=el('div','epbadge'); p.textContent=seen+'/'+eps; b.appendChild(p);}
-  }
   b.title=w.title;
   b.onclick=()=>openDetail(w.id);
   return b;
@@ -444,7 +435,10 @@ function openSheet(title,html){
   $('#sheetTitle').textContent=title; $('#sheetBody').innerHTML=html;
   $('#sheet').classList.add('open'); $('#scrim').classList.add('open'); $('#sheet').scrollTop=0;
 }
-function closeSheet(){$('#sheet').classList.remove('open');$('#scrim').classList.remove('open');}
+let sheetCleanup=null;
+function closeSheet(){
+  if(sheetCleanup){ try{sheetCleanup();}catch(e){} sheetCleanup=null; }
+  $('#sheet').classList.remove('open');$('#scrim').classList.remove('open');}
 $('#closeSheet').onclick=closeSheet; $('#scrim').onclick=closeSheet;
 
 /* ---------- add ---------- */
@@ -574,6 +568,116 @@ function firstLoadable(urls){
   });
 }
 
+
+/* ---------- 表紙を選ぶ部品（貼り付け・共有・番号・URL・写真） ---------- */
+function coverPickerHTML(pfx){
+  return `
+    <div class="mcover" id="${pfx}Prev" style="margin:0 0 14px"><span>まだ何も</span></div>
+
+    <div class="row" style="margin-bottom:6px">
+      <button class="btn ghost" id="${pfx}Paste">スクショを貼り付け</button>
+      <button class="btn ghost" id="${pfx}Pick" style="flex:0 0 108px">写真を選ぶ</button></div>
+    <input type="file" accept="image/*" id="${pfx}File" style="display:none">
+    <div class="hint" style="margin-top:0">スクリーンショットを撮ってコピーしたあと「貼り付け」。
+      共有メニューから画像をこのアプリに送っても入ります。</div>
+
+    <label class="f">DLsite の作品番号から</label>
+    <div class="row"><input class="in" id="${pfx}Rj" placeholder="RJ01234567" autocapitalize="characters">
+      <button class="btn ghost" id="${pfx}RjGo" style="flex:0 0 78px">試す</button></div>
+
+    <label class="f">画像の URL を貼る</label>
+    <div class="row"><input class="in" id="${pfx}Url" placeholder="https://…">
+      <button class="btn ghost" id="${pfx}UrlGo" style="flex:0 0 78px">試す</button></div>`;
+}
+// onChange(url, dataUrl) が呼ばれる。どちらか一方が入る。
+function bindCoverPicker(pfx,onChange){
+  const prev=$('#'+pfx+'Prev');
+  const show=(src,label)=>{
+    prev.innerHTML = src? `<img src="${esc(src)}" referrerpolicy="no-referrer" alt=""><span>${esc(label)}</span>`
+                        : '<span>まだ何も</span>';
+  };
+  const setUrl =u=>{ show(u,'URL から'); onChange(u,''); };
+  const setData=(d,l)=>{ show(d,l||'端末内に保存'); onChange('',d); };
+  const busy=m=>{ prev.innerHTML='<span><span class="spin"></span> '+m+'</span>'; };
+
+  $('#'+pfx+'Pick').onclick=()=>$('#'+pfx+'File').click();
+  $('#'+pfx+'File').onchange=async e=>{
+    const f=e.target.files[0]; if(!f)return;
+    busy('読み込んでいます…'); setData(await shrink(f));};
+
+  $('#'+pfx+'Paste').onclick=async()=>{
+    try{
+      if(!navigator.clipboard?.read) throw new Error('この端末では貼り付けに対応していません');
+      busy('クリップボードを見ています…');
+      const items=await navigator.clipboard.read();
+      for(const it of items){
+        const type=it.types.find(t=>t.startsWith('image/'));
+        if(type){ const blob=await it.getType(type); setData(await shrink(blob),'貼り付けから'); return; }
+      }
+      show('',''); toast('画像が見つかりませんでした');
+    }catch(err){ show('',''); toast(err.message||'貼り付けできませんでした'); }
+  };
+  // キーボードや長押しからの貼り付けも拾う
+  const onPaste=async e=>{
+    const it=[...(e.clipboardData?.items||[])].find(x=>x.type.startsWith('image/'));
+    if(!it) return;
+    e.preventDefault(); busy('読み込んでいます…');
+    setData(await shrink(it.getAsFile()),'貼り付けから');
+  };
+  document.addEventListener('paste',onPaste);
+  sheetCleanup=()=>document.removeEventListener('paste',onPaste);
+
+  $('#'+pfx+'RjGo').onclick=async()=>{
+    const c=dlsiteCovers($('#'+pfx+'Rj').value);
+    if(!c.length){toast('RJ番号を入れてください');return;}
+    busy('探しています…');
+    const hit=await firstLoadable(c);
+    if(hit) show(hit,'DLsite から'),onChange(hit,'');
+    else{ show('',''); toast('見つかりませんでした'); }
+  };
+  $('#'+pfx+'UrlGo').onclick=async()=>{
+    const u=$('#'+pfx+'Url').value.trim();
+    if(!/^https?:\/\//i.test(u)){toast('http から始まる URL を入れてください');return;}
+    busy('確認しています…');
+    const hit=await firstLoadable([u]);
+    if(hit) setUrl(hit); else { show(''); toast('この URL は表示できませんでした'); }
+  };
+  return { setData };
+}
+
+/* ---------- 表紙をあとから変える ---------- */
+async function openCoverEditor(id){
+  const w=works.find(x=>x.id===id); if(!w) return;
+  const cur=await resolveCover(w);
+  openSheet('表紙を変える',`
+    <div style="font-family:var(--mincho);font-size:16px;line-height:1.45;margin-bottom:4px">${esc(w.title)}</div>
+    <div class="meta" style="margin-bottom:16px">${esc([CATS[w.cat],w.maker,w.year].filter(Boolean).join(' · '))||'—'}</div>
+    ${coverPickerHTML('ce')}
+    <div class="divider"></div>
+    <button class="btn" id="ceSave" disabled>この表紙にする</button>
+    <div style="height:8px"></div>
+    <div class="row">
+      <button class="btn ghost" id="ceBack">やめて戻る</button>
+      ${cur?'<button class="btn danger" id="ceClear">表紙を外す</button>':''}</div>`);
+
+  let url='',data='';
+  bindCoverPicker('ce',(u,d)=>{ url=u; data=d; $('#ceSave').disabled=!(u||d); });
+  if(cur) $('#cePrev').innerHTML=`<img src="${esc(cur)}" referrerpolicy="no-referrer" alt=""><span>いまの表紙</span>`;
+
+  const apply=async(newCover)=>{
+    if(String(w.cover||'').startsWith('local:')){ await sdel('shoko:img:'+w.id); imgCache.delete(w.id); }
+    w.cover=newCover; w.updatedAt=Date.now();
+    await saveWorks(); render(); openDetail(w.id);
+  };
+  $('#ceSave').onclick=async()=>{
+    if(data){ await sset('shoko:img:'+w.id,data); imgCache.set(w.id,data); await apply('local:'+w.id); }
+    else if(url){ await apply(url); }
+    toast('表紙を変えました');
+  };
+  $('#ceBack').onclick=()=>openDetail(w.id);
+  if($('#ceClear')) $('#ceClear').onclick=async()=>{ await apply(''); toast('表紙を外しました'); };
+}
+
 function manualForm(){
   return `<div class="hint" style="margin-top:0">同人誌・同人音声・イベント本など、公開データベースに無いものはこちら。</div>
     <label class="f">分類</label>
@@ -584,72 +688,32 @@ function manualForm(){
     <label class="f">年</label><input class="in" id="mYear" inputmode="numeric" placeholder="2025">
 
     <div class="divider"></div>
-    <div class="sectitle">表紙<span>やりやすい方法をひとつ</span></div>
-    <div class="mcover" id="mPreview"><span>まだ何も</span></div>
-
-    <label class="f">1. DLsite の作品番号から</label>
-    <div class="row"><input class="in" id="mRj" placeholder="RJ01234567" autocapitalize="characters">
-      <button class="btn ghost" id="mRjGo" style="flex:0 0 78px">試す</button></div>
-    <div class="hint">番号から表紙の場所を推測します。当たれば上に出ます。外れることもあります。</div>
-
-    <label class="f">2. 画像の URL を貼る</label>
-    <div class="row"><input class="in" id="mUrl" placeholder="https://…">
-      <button class="btn ghost" id="mUrlGo" style="flex:0 0 78px">試す</button></div>
-    <div class="hint">作品ページの画像を長押し →「画像リンクをコピー」で取れます。</div>
-
-    <label class="f">3. 端末の写真から</label>
-    <input type="file" accept="image/*" id="mFile" class="in">
-    <div class="hint">実物を撮った写真やスクリーンショットでも。幅400pxに縮めて端末内に保存します。
-      外部に頼らないので、いちばん確実で消えません。</div>
+    <div class="sectitle">表紙<span>やりやすい方法をひとつ。あとから変えられます</span></div>
+    ${coverPickerHTML('m')}
 
     <label class="f" style="display:flex;align-items:center;gap:8px">
       <input type="checkbox" id="mAdult" checked style="width:auto"> 伏せ字表示の対象にする</label>
     <div style="height:20px"></div><button class="btn" id="mSave">収める</button>`;
 }
 function bindManual(){
-  let chosenUrl='', chosenData='';
-  const prev=()=>$('#mPreview');
-  const showPrev=(src,label)=>{
-    prev().innerHTML = src
-      ? `<img src="${esc(src)}" referrerpolicy="no-referrer" alt=""><span>${esc(label)}</span>`
-      : '<span>まだ何も</span>';
-  };
+  let url='', data='';
+  const picker=bindCoverPicker('m',(u,d)=>{url=u;data=d;});
   $('#mCat').onclick=e=>{const b=e.target.closest('button');if(!b)return;
     [...$('#mCat').children].forEach(x=>x.setAttribute('aria-pressed',x===b));};
-
-  $('#mRjGo').onclick=async()=>{
-    const urls=dlsiteCovers($('#mRj').value);
-    if(!urls.length){toast('RJ番号を入れてください');return;}
-    prev().innerHTML='<span><span class="spin"></span> 探しています…</span>';
-    const hit=await firstLoadable(urls);
-    if(hit){ chosenUrl=hit; chosenData=''; showPrev(hit,'DLsite から'); }
-    else{ showPrev('',''); toast('見つかりませんでした。URL か写真で入れてください'); }
-  };
-  $('#mUrlGo').onclick=async()=>{
-    const u=$('#mUrl').value.trim();
-    if(!/^https?:\/\//i.test(u)){toast('http から始まる URL を入れてください');return;}
-    prev().innerHTML='<span><span class="spin"></span> 確認しています…</span>';
-    const hit=await firstLoadable([u]);
-    if(hit){ chosenUrl=hit; chosenData=''; showPrev(hit,'URL から'); }
-    else{ showPrev('',''); toast('この URL は表示できませんでした'); }
-  };
-  $('#mFile').onchange=async e=>{
-    const f=e.target.files[0]; if(!f)return;
-    chosenData=await shrink(f); chosenUrl='';
-    showPrev(chosenData,'端末内に保存');
-  };
+  // 共有されてきた画像があれば最初から入れておく
+  if(pendingShared){ picker.setData(pendingShared,'共有された画像'); data=pendingShared; pendingShared=null; }
 
   $('#mSave').onclick=async()=>{
     const title=$('#mTitle').value.trim(); if(!title){toast('タイトルを入れてください');return;}
     const cat=$('#mCat').querySelector('[aria-pressed="true"]').dataset.c;
-    const id=uid(); let cover=chosenUrl;
-    if(chosenData){ await sset('shoko:img:'+id,chosenData); imgCache.set(id,chosenData); cover='local:'+id; }
+    const id=uid(); let cover=url;
+    if(data){ await sset('shoko:img:'+id,data); imgCache.set(id,data); cover='local:'+id; }
     works.unshift({id,cat,title,maker:$('#mMaker').value.trim(),year:$('#mYear').value.trim(),
       cover,synopsis:'',source:'manual',status:'want',rating:0,review:'',episodes:[],
       adult:$('#mAdult').checked,logs:[],createdAt:Date.now(),updatedAt:Date.now()});
     await saveWorks(); closeSheet(); render(); toast('「'+title+'」を収めました');};
 }
-function shrink(file){
+function shrink(file){ // File でも Blob でも可
   return new Promise((res,rej)=>{const fr=new FileReader();
     fr.onload=()=>{const im=new Image();
       im.onload=()=>{const W=400,h=Math.round(im.height*W/im.width);
@@ -708,6 +772,9 @@ async function openDetail(id){
     <label class="f" style="margin-top:20px">いまの状態</label>
     <div class="statpick" id="stSeg">${Object.entries(STAT).map(([k,v])=>
       `<button data-s="${k}" aria-pressed="${w.status===k}">${v}</button>`).join('')}</div>
+
+    <div style="height:14px"></div>
+    <button class="btn ghost" id="editCover">表紙を変える</button>
 
     <label class="f">分類</label>
     <div class="seg" id="catSeg">${Object.entries(CATS).map(([k,v])=>
@@ -915,6 +982,8 @@ async function openDetail(id){
     w.status=b.dataset.s; w.updatedAt=Date.now();
     [...$('#stSeg').children].forEach(x=>x.setAttribute('aria-pressed',x===b));
     paintFlag(); await saveWorks(); render(); toast(STAT[w.status]);};
+
+  $('#editCover').onclick=()=>openCoverEditor(w.id);
 
   $('#catSeg').onclick=async e=>{const b=e.target.closest('button');if(!b)return;
     w.cat=b.dataset.c; w.updatedAt=Date.now();
@@ -1345,60 +1414,19 @@ function openCoverFiller(){
     openSheet('表紙をまとめて付ける',`
       <div class="hint" style="margin-top:0">残り <b>${rest}</b> 件　（${i+1} / ${queue.length}）</div>
       <div class="prog" style="margin:9px 0 16px"><i style="width:${i/queue.length*100}%"></i></div>
-
-      <div style="display:flex;gap:14px;align-items:flex-start">
-        <div class="mcover" id="cfPreview" style="margin:0;flex:0 0 96px"><span>まだ何も</span></div>
-        <div style="flex:1;min-width:0">
-          <div style="font-family:var(--mincho);font-size:16px;line-height:1.45">${esc(w.title)}</div>
-          <div class="meta" style="margin-top:5px">${esc([CATS[w.cat],w.maker,w.year].filter(Boolean).join(' · '))}</div>
-        </div></div>
-
-      <label class="f">DLsite の作品番号から</label>
-      <div class="row"><input class="in" id="cfRj" placeholder="RJ01234567" autocapitalize="characters"
-        inputmode="text"><button class="btn ghost" id="cfRjGo" style="flex:0 0 78px">試す</button></div>
-
-      <label class="f">画像の URL を貼る</label>
-      <div class="row"><input class="in" id="cfUrl" placeholder="https://…">
-        <button class="btn ghost" id="cfUrlGo" style="flex:0 0 78px">試す</button></div>
-
-      <label class="f">端末の写真から</label>
-      <input type="file" accept="image/*" id="cfFile" class="in">
-
+      <div style="font-family:var(--mincho);font-size:16px;line-height:1.45">${esc(w.title)}</div>
+      <div class="meta" style="margin:5px 0 16px">${esc([CATS[w.cat],w.maker,w.year].filter(Boolean).join(' · '))||'—'}</div>
+      ${coverPickerHTML('cf')}
       <div class="divider"></div>
       <button class="btn" id="cfSave" disabled>この表紙で決定して次へ</button>
       <div style="height:8px"></div>
       <div class="row">
         <button class="btn ghost" id="cfSkip">とばす</button>
-        <button class="btn ghost" id="cfQuit">やめる</button></div>
-    `);
+        <button class="btn ghost" id="cfQuit">やめる</button></div>`);
 
-    let url='', data='';
-    const prev=$('#cfPreview');
-    const show=(src,label)=>{
-      prev.innerHTML = src? `<img src="${esc(src)}" referrerpolicy="no-referrer" alt=""><span>${esc(label)}</span>`
-                          : '<span>まだ何も</span>';
-      $('#cfSave').disabled = !src;
-    };
-    $('#cfRjGo').onclick=async()=>{
-      const c=dlsiteCovers($('#cfRj').value);
-      if(!c.length){toast('RJ番号を入れてください');return;}
-      prev.innerHTML='<span><span class="spin"></span> 探しています…</span>';
-      const hit=await firstLoadable(c);
-      if(hit){url=hit;data='';show(hit,'DLsite から');}
-      else{show('','');toast('見つかりませんでした');}
-    };
-    $('#cfUrlGo').onclick=async()=>{
-      const u=$('#cfUrl').value.trim();
-      if(!/^https?:\/\//i.test(u)){toast('http から始まる URL を入れてください');return;}
-      prev.innerHTML='<span><span class="spin"></span> 確認しています…</span>';
-      const hit=await firstLoadable([u]);
-      if(hit){url=hit;data='';show(hit,'URL から');}
-      else{show('','');toast('この URL は表示できませんでした');}
-    };
-    $('#cfFile').onchange=async e=>{
-      const f=e.target.files[0]; if(!f)return;
-      data=await shrink(f); url=''; show(data,'端末内に保存');
-    };
+    let url='',data='';
+    bindCoverPicker('cf',(u,d)=>{ url=u; data=d; $('#cfSave').disabled=!(u||d); });
+
     $('#cfSave').onclick=async()=>{
       if(data){ await sset('shoko:img:'+w.id,data); imgCache.set(w.id,data); w.cover='local:'+w.id; }
       else if(url){ w.cover=url; }
@@ -1575,15 +1603,74 @@ if('serviceWorker' in navigator){
 // ストレージを消されにくくする
 if(navigator.storage?.persist) navigator.storage.persist().catch(()=>{});
 
-// 共有メニューから来たときはタイトルを拾って検索を開く
-function handleShare(){
+// 共有されてきた画像の一時置き場
+let pendingShared=null;
+
+// 共有メニューから来たときの処理（文字なら検索、画像なら表紙として扱う）
+async function handleShare(){
   const p=new URLSearchParams(location.search);
   const t=(p.get('title')||p.get('text')||'').trim();
-  if(!t) return;
+  const hasImg=p.get('shared')==='1';
+  if(!t&&!hasImg) return;
   history.replaceState(null,'',location.pathname);
-  openAdd();
-  const q=t.slice(0,80);
-  setTimeout(()=>{const i=$('#apiq'); if(i){i.value=q; i.dispatchEvent(new Event('input'));}},60);
+
+  if(hasImg){
+    let blob=null;
+    try{ blob=await sget('shoko:shared'); await sdel('shoko:shared'); }catch(e){}
+    if(blob){
+      try{ pendingShared=await shrink(blob); }catch(e){ pendingShared=null; }
+      if(pendingShared){ openSharedImage(pendingShared,t); return; }
+    }
+  }
+  if(t){
+    openAdd();
+    setTimeout(()=>{const i=$('#apiq'); if(i){i.value=t.slice(0,80); i.dispatchEvent(new Event('input'));}},60);
+  }
+}
+
+// 共有された画像を、どの作品の表紙にするか決める画面
+function openSharedImage(dataUrl,title){
+  const noCover=works.filter(w=>!w.cover);
+  openSheet('共有された画像',`
+    <div class="mcover" id="shPrev" style="margin:0 0 14px">
+      <img src="${esc(dataUrl)}" alt=""><span>共有された画像</span></div>
+    <div class="hint" style="margin-top:0">この画像をどうしますか。</div>
+    <div style="height:14px"></div>
+    <button class="btn" id="shNew">新しい作品として登録する</button>
+    <div style="height:8px"></div>
+    <label class="f" style="margin-top:6px">いまある作品の表紙にする</label>
+    <input class="in" id="shQ" placeholder="作品名で探す${noCover.length?'（表紙なし '+noCover.length+'件）':''}">
+    <div id="shList" style="margin-top:10px"></div>`);
+
+  const paint=()=>{
+    const q=$('#shQ').value.trim().toLowerCase();
+    const list=(q? works.filter(w=>w.title.toLowerCase().includes(q)) : noCover).slice(0,20);
+    const box=$('#shList'); box.innerHTML='';
+    if(!list.length){ box.innerHTML='<div class="hint">該当する作品がありません。</div>'; return; }
+    list.forEach(w=>{
+      const b=el('button','res');
+      b.innerHTML=`<div style="flex:1;min-width:0"><div class="t">${esc(w.title)}</div>
+        <div class="m">${esc([CATS[w.cat],w.maker].filter(Boolean).join(' · '))}${w.cover?' · 表紙あり':''}</div></div>
+        <span class="add">→</span>`;
+      b.onclick=async()=>{
+        if(String(w.cover||'').startsWith('local:')) await sdel('shoko:img:'+w.id);
+        await sset('shoko:img:'+w.id,dataUrl); imgCache.set(w.id,dataUrl);
+        w.cover='local:'+w.id; w.updatedAt=Date.now();
+        pendingShared=null;
+        await saveWorks(); closeSheet(); render(); toast('「'+w.title+'」の表紙にしました');
+      };
+      box.appendChild(b);
+    });
+  };
+  $('#shQ').oninput=paint; paint();
+  $('#shNew').onclick=()=>{
+    openAdd();
+    setTimeout(()=>{
+      [...$('#srcSeg').children].forEach(x=>x.setAttribute('aria-pressed',x.dataset.s==='manual'));
+      addArea('manual');
+      if(title) $('#mTitle').value=title.slice(0,120);
+    },40);
+  };
 }
 
 // 書き出しから日が空いたら知らせる
