@@ -156,6 +156,12 @@
   .syn.open{max-height:none}
   .more{font-size:11px;color:var(--brass);margin-top:3px}
 
+  .logbar{display:flex;gap:5px;align-items:center;margin-bottom:12px}
+  .logbar button{border:1px solid var(--line);border-radius:var(--r);padding:5px 9px;
+                 font-size:11.5px;color:var(--paper-dim);white-space:nowrap}
+  .logbar button[aria-pressed="true"]{border-color:var(--brass-dim);color:var(--brass)}
+  .log.cur{border-left-color:var(--brass)}
+  .log.cur::before{background:var(--brass)}
   .log{border-left:2px solid var(--line);padding:0 0 16px 13px;position:relative;margin-left:3px}
   .log:last-child{padding-bottom:2px}
   .log::before{content:"";position:absolute;left:-4.5px;top:6px;width:7px;height:7px;border-radius:50%;background:var(--brass-dim)}
@@ -242,9 +248,10 @@
 <script>
 (()=>{
 "use strict";
-const VERSION='1.3.0';   // 表示用
+const VERSION='1.4.0';   // 表示用
 const SCHEMA=3;          // データ構造の版。移行判定に使う
 const CHANGES=[
+  ['1.4.0','記録を話数順に並べ替え。選んだ話の記録だけを表示できるように。'],
   ['1.3.0','まとめて削除を追加。直前の取り込みの取り消し、絞り込み範囲の削除、全削除。'],
   ['1.2.0','SakuLog の書き出しを自動判別して、表紙・総評・話数メモごと取り込めるように。'],
   ['1.1.0','ほかのアプリの JSON / CSV を、列を対応づけて取り込めるように。'],
@@ -687,7 +694,7 @@ async function openDetail(id){
       const b=el('button'); b.textContent=epLabel(e,multi);
       if(seen.has(e.k)) b.classList.add('seen');
       b.setAttribute('aria-pressed', e.k===selKey);
-      b.onclick=()=>{selKey=e.k; $('#lgEp').value=epText(e,multi); paintEpisodes();};
+      b.onclick=()=>{selKey=e.k; $('#lgEp').value=epText(e,multi); paintEpisodes(); refresh();};
       row.appendChild(b);
     });
     a.appendChild(row);
@@ -737,13 +744,61 @@ async function openDetail(id){
   const paintRate=()=>{
     [...$('#rate').children].forEach(x=>x.setAttribute('aria-pressed',+x.dataset.v===w.rating));
     $('#rateNote').textContent = w.rating? '★'.repeat(w.rating)+'　'+RATE[w.rating] : 'まだ評価していません';};
+  // 記録の並び順と絞り込み
+  let logScope='ep', logSort='ep', logAsc=true;
+  const epNo=l=>{ const m=/^(\d+)-(\d+)$/.exec(l.epKey||''); return m? [+m[1],+m[2]] : [9999,9999]; };
+
   const refresh=()=>{
-    const box=$('#logs');
-    const ls=[...(w.logs||[])].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-    box.innerHTML = ls.length? '' : '<div class="hint">まだ記録はありません。</div>';
+    const box=$('#logs'); box.innerHTML='';
+    const all=[...(w.logs||[])];
+    const hasEps=(w.episodes||[]).length>0;
+    const scoped = (hasEps && logScope==='ep' && selKey) ? all.filter(l=>l.epKey===selKey) : all;
+
+    const ls=[...scoped].sort((a,b)=>{
+      if(logSort==='ep'){
+        const A=epNo(a),B=epNo(b);
+        if(A[0]!==B[0]) return A[0]-B[0];
+        if(A[1]!==B[1]) return A[1]-B[1];
+      }
+      return String(a.date||'').localeCompare(String(b.date||''));
+    });
+    if(!logAsc) ls.reverse();
+
+    if(all.length){
+      const cur=(w.episodes||[]).find(e=>e.k===selKey);
+      const bar=el('div','logbar');
+      bar.innerHTML=`
+        ${hasEps? `<button data-k="scope" aria-pressed="${logScope==='ep'}">${
+          cur? esc((w.episodes.some(e=>e.s>1)?`S${cur.s} 第${cur.n}話`:`第${cur.n}話`)+'だけ') : 'この話だけ'}</button>`:''}
+        <span style="flex:1"></span>
+        <button data-k="sort" aria-pressed="${logSort==='ep'}">${logSort==='ep'?'話数順':'日付順'}</button>
+        <button data-k="asc">${logAsc?'↑ 古い順':'↓ 新しい順'}</button>`;
+      bar.onclick=e=>{
+        const b=e.target.closest('button'); if(!b) return;
+        if(b.dataset.k==='scope') logScope = logScope==='ep'?'all':'ep';
+        if(b.dataset.k==='sort')  logSort  = logSort==='ep'?'date':'ep';
+        if(b.dataset.k==='asc')   logAsc   = !logAsc;
+        refresh();
+      };
+      box.appendChild(bar);
+    }
+
+    if(!ls.length){
+      const h=el('div','hint');
+      h.textContent = !all.length ? 'まだ記録はありません。'
+        : (hasEps&&logScope==='ep') ? 'この話の記録はまだありません。「ぜんぶ」を押すと全部見られます。'
+        : 'まだ記録はありません。';
+      box.appendChild(h);
+    }
+
+    let lastEp=null;
     ls.forEach(l=>{
-      const d=el('div','log');
-      d.innerHTML=`<div class="d">${esc(l.date||'')}${l.ep?' 　'+esc(l.ep):''}</div>
+      // 話数が変わるところに区切りを入れる
+      if(logSort==='ep' && logScope!=='ep' && l.epKey && l.epKey!==lastEp){
+        lastEp=l.epKey;
+      }
+      const d=el('div','log'+(l.epKey&&l.epKey===selKey?' cur':''));
+      d.innerHTML=`<div class="d">${esc(l.ep||'')}${l.ep&&l.date?' 　':''}${esc(l.date||'')}</div>
         <div class="b">${esc(l.body)}</div><button class="del">削除</button>`;
       d.querySelector('.del').onclick=async()=>{
         w.logs=w.logs.filter(x=>x.id!==l.id); w.updatedAt=Date.now();
