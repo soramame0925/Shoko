@@ -76,6 +76,11 @@
   .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
   @media(min-width:520px){.grid{grid-template-columns:repeat(4,1fr)}}
   @media(min-width:700px){.grid{grid-template-columns:repeat(5,1fr)}}
+  /* 同人の棚：横長の表紙が多いので枠ごと横に。1行2列で大きく見せる */
+  .grid.wide{grid-template-columns:repeat(2,1fr);gap:12px}
+  @media(min-width:520px){.grid.wide{grid-template-columns:repeat(3,1fr)}}
+  @media(min-width:700px){.grid.wide{grid-template-columns:repeat(4,1fr)}}
+  .grid.wide .cover{aspect-ratio:4/3}
 
   /* 表紙は隠さない。状態は明るさと下端の線で示す */
   .cover{position:relative;aspect-ratio:2/3;background:var(--panel-2);border-radius:2px;
@@ -162,6 +167,8 @@
 
   .dhead{display:flex;gap:14px;align-items:flex-start}
   .dhead .cv{width:88px;flex:0 0 auto}
+  .dhead .cv.wide{width:128px}
+  .dhead .cv.wide .cover{aspect-ratio:4/3}
   .dhead h3{font-family:var(--mincho);font-size:18px;line-height:1.45;margin:0 0 6px;font-weight:600}
   .meta{font-size:11.5px;color:var(--paper-dim);letter-spacing:.04em}
   .syn{font-size:12.5px;color:var(--paper-dim);line-height:1.75;margin-top:12px;max-height:5.3em;overflow:hidden}
@@ -265,9 +272,10 @@
 <script>
 (()=>{
 "use strict";
-const VERSION='1.8.1';   // 表示用
+const VERSION='1.9.0';   // 表示用
 const SCHEMA=3;          // データ構造の版。移行判定に使う
 const CHANGES=[
+  ['1.9.0','同人の棚を横長の枠に変更。1行2列で大きく表示。'],
   ['1.8.1','評価と状態の線が表紙の下に隠れていた不具合を修正。'],
   ['1.8.0','横長や正方形の表紙を切り抜かずに収めるように。見せ方の手動指定を追加。'],
   ['1.7.0','スクショの貼り付けと、共有メニューからの画像受け取りに対応。表紙をあとから変えられるように。話数バッジを廃止。'],
@@ -392,6 +400,7 @@ async function render(){
   ).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
 
   const g=$('#grid'); g.innerHTML='';
+  g.classList.toggle('wide', filter.cat==='doujin');
   $('#empty').style.display = works.length? 'none':'block';
   if(works.length && !list.length){
     const d=el('div');d.style.cssText='grid-column:1/-1;color:var(--paper-dim);font-size:13px;padding:30px 0;text-align:center';
@@ -402,10 +411,13 @@ async function render(){
 }
 
 // 縦長かどうかで表紙の見せ方を変える。w.fit で手動指定もできる。
-function applyFit(box,im,src,w){
+function applyFit(box,im,src,w,frame){
   const decide=()=>{
     const nat = im.naturalWidth&&im.naturalHeight ? im.naturalWidth/im.naturalHeight : 0.667;
-    const fit = w.fit && w.fit!=='auto' ? w.fit : (nat>0.8 ? 'contain' : 'cover');
+    // 枠の形に近ければ切り抜き、離れていれば全体を見せる
+    const target = frame==='wide' ? 4/3 : 2/3;
+    const off = nat>target ? nat/target : target/nat;
+    const fit = w.fit && w.fit!=='auto' ? w.fit : (off>1.22 ? 'contain' : 'cover');
     box.classList.toggle('fit-contain', fit==='contain');
     if(fit==='contain' && !box.querySelector('.fill')){
       const bg=el('div','fill');
@@ -420,7 +432,8 @@ async function cardEl(w){
   const b=el('button','cover st-'+w.status+(settings.safe&&w.adult?' blur':''));
   const src=await resolveCover(w);
   if(src){const im=el('img');im.alt=w.title;im.loading='lazy';
-    im.referrerPolicy='no-referrer';b.appendChild(im);im.src=src;applyFit(b,im,src,w);}
+    im.referrerPolicy='no-referrer';b.appendChild(im);im.src=src;
+    applyFit(b,im,src,w, filter.cat==='doujin'?'wide':'tall');}
   else{const n=el('div','noimg');n.textContent=w.title;b.appendChild(n);}
   if(w.rating){const r=el('div','rbadge');r.textContent='★'+w.rating;b.appendChild(r);}
   b.title=w.title;
@@ -798,7 +811,7 @@ async function openDetail(id){
   const src=await resolveCover(w);
   openSheet(CATS[w.cat],`
     <div class="dhead">
-      <div class="cv"><div class="cover${settings.safe&&w.adult?' blur':''}">
+      <div class="cv${w.cat==='doujin'?' wide':''}"><div class="cover${settings.safe&&w.adult?' blur':''}">
         ${src?`<img src="${esc(src)}" alt="">`:`<div class="noimg">${esc(w.title)}</div>`}
         <div class="flag ${w.status}" id="dFlag"></div></div></div>
       <div style="flex:1;min-width:0">
@@ -946,7 +959,7 @@ async function openDetail(id){
 
   {
     const dImg=$('.dhead .cover img');
-    if(dImg) applyFit($('.dhead .cover'), dImg, src, w);
+    if(dImg) applyFit($('.dhead .cover'), dImg, src, w, w.cat==='doujin'?'wide':'tall');
   }
 
   const flagText={want:'これから',watching:'見てる',done:'見た',paused:'中断',dropped:'やめた'};
