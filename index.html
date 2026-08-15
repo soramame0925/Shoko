@@ -80,7 +80,11 @@
   /* 表紙は隠さない。状態は明るさと下端の線で示す */
   .cover{position:relative;aspect-ratio:2/3;background:var(--panel-2);border-radius:2px;
          overflow:hidden;border:1px solid var(--line);display:block;width:100%}
-  .cover img{width:100%;height:100%;object-fit:cover;display:block;transition:filter .2s}
+  .cover img{width:100%;height:100%;object-fit:cover;display:block;transition:filter .2s;position:relative;z-index:1}
+  /* 縦長でない表紙は切り抜かず、背景に同じ絵をぼかして敷く */
+  .cover.fit-contain img{object-fit:contain}
+  .cover .fill{position:absolute;inset:-12%;background-size:cover;background-position:center;
+               filter:blur(16px) saturate(.75) brightness(.5);z-index:0}
   .cover.blur img{filter:blur(13px) saturate(.5)}
   .cover .noimg{position:absolute;inset:0;display:grid;place-items:center;padding:8px;
                 font-family:var(--mincho);font-size:11.5px;color:#8A93A1;text-align:center;line-height:1.5}
@@ -261,9 +265,10 @@
 <script>
 (()=>{
 "use strict";
-const VERSION='1.7.0';   // 表示用
+const VERSION='1.8.0';   // 表示用
 const SCHEMA=3;          // データ構造の版。移行判定に使う
 const CHANGES=[
+  ['1.8.0','横長や正方形の表紙を切り抜かずに収めるように。見せ方の手動指定を追加。'],
   ['1.7.0','スクショの貼り付けと、共有メニューからの画像受け取りに対応。表紙をあとから変えられるように。話数バッジを廃止。'],
   ['1.6.0','取り込み時に作品番号から表紙を探せるように。表紙のない作品を順に片付ける画面を追加。'],
   ['1.5.0','同人を独立したタブに分離。表紙を隠さない表示に変更。タブを大きく。DLsite の作品番号から表紙を探せるように。'],
@@ -395,11 +400,26 @@ async function render(){
   renderRecall();
 }
 
+// 縦長かどうかで表紙の見せ方を変える。w.fit で手動指定もできる。
+function applyFit(box,im,src,w){
+  const decide=()=>{
+    const nat = im.naturalWidth&&im.naturalHeight ? im.naturalWidth/im.naturalHeight : 0.667;
+    const fit = w.fit && w.fit!=='auto' ? w.fit : (nat>0.8 ? 'contain' : 'cover');
+    box.classList.toggle('fit-contain', fit==='contain');
+    if(fit==='contain' && !box.querySelector('.fill')){
+      const bg=el('div','fill');
+      bg.style.backgroundImage='url("'+String(src).replace(/"/g,'%22')+'")';
+      box.insertBefore(bg, box.firstChild);
+    }
+  };
+  if(im.complete && im.naturalWidth) decide(); else im.addEventListener('load',decide,{once:true});
+}
+
 async function cardEl(w){
   const b=el('button','cover st-'+w.status+(settings.safe&&w.adult?' blur':''));
   const src=await resolveCover(w);
-  if(src){const im=el('img');im.src=src;im.alt=w.title;im.loading='lazy';
-    im.referrerPolicy='no-referrer';b.appendChild(im);}
+  if(src){const im=el('img');im.alt=w.title;im.loading='lazy';
+    im.referrerPolicy='no-referrer';b.appendChild(im);im.src=src;applyFit(b,im,src,w);}
   else{const n=el('div','noimg');n.textContent=w.title;b.appendChild(n);}
   if(w.rating){const r=el('div','rbadge');r.textContent='★'+w.rating;b.appendChild(r);}
   b.title=w.title;
@@ -653,6 +673,14 @@ async function openCoverEditor(id){
     <div style="font-family:var(--mincho);font-size:16px;line-height:1.45;margin-bottom:4px">${esc(w.title)}</div>
     <div class="meta" style="margin-bottom:16px">${esc([CATS[w.cat],w.maker,w.year].filter(Boolean).join(' · '))||'—'}</div>
     ${coverPickerHTML('ce')}
+
+    <label class="f">表紙の見せ方</label>
+    <div class="seg" id="ceFit">
+      <button data-f="auto"    aria-pressed="${!w.fit||w.fit==='auto'}">自動</button>
+      <button data-f="cover"   aria-pressed="${w.fit==='cover'}">枠いっぱい</button>
+      <button data-f="contain" aria-pressed="${w.fit==='contain'}">全体を見せる</button></div>
+    <div class="hint">横長や正方形の表紙は自動で「全体を見せる」になります。切れて困るときはここで指定してください。</div>
+
     <div class="divider"></div>
     <button class="btn" id="ceSave" disabled>この表紙にする</button>
     <div style="height:8px"></div>
@@ -662,6 +690,14 @@ async function openCoverEditor(id){
 
   let url='',data='';
   bindCoverPicker('ce',(u,d)=>{ url=u; data=d; $('#ceSave').disabled=!(u||d); });
+
+  $('#ceFit').onclick=async e=>{
+    const b=e.target.closest('button'); if(!b) return;
+    [...$('#ceFit').children].forEach(x=>x.setAttribute('aria-pressed',x===b));
+    w.fit=b.dataset.f; w.updatedAt=Date.now();
+    await saveWorks(); render();
+    toast(({auto:'自動',cover:'枠いっぱい',contain:'全体を見せる'})[w.fit]);
+  };
   if(cur) $('#cePrev').innerHTML=`<img src="${esc(cur)}" referrerpolicy="no-referrer" alt=""><span>いまの表紙</span>`;
 
   const apply=async(newCover)=>{
@@ -905,6 +941,11 @@ async function openDetail(id){
         : '取り込みに失敗しました。通信を確認してください。';
       const a=$('#epArea'); addManualCount(a);
     }
+  }
+
+  {
+    const dImg=$('.dhead .cover img');
+    if(dImg) applyFit($('.dhead .cover'), dImg, src, w);
   }
 
   const flagText={want:'これから',watching:'見てる',done:'見た',paused:'中断',dropped:'やめた'};
