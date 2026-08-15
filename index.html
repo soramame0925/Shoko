@@ -170,6 +170,8 @@
   .dhead .cv.wide{width:128px}
   .dhead .cv.wide .cover{aspect-ratio:4/3}
   .dhead h3{font-family:var(--mincho);font-size:18px;line-height:1.45;margin:0 0 6px;font-weight:600}
+  .dhead h3.editable{cursor:pointer;border-bottom:1px dashed var(--line);display:inline-block;padding-bottom:2px}
+  .dhead h3.editable:active{color:var(--brass)}
   .meta{font-size:11.5px;color:var(--paper-dim);letter-spacing:.04em}
   .syn{font-size:12.5px;color:var(--paper-dim);line-height:1.75;margin-top:12px;max-height:5.3em;overflow:hidden}
   .syn.open{max-height:none}
@@ -277,9 +279,10 @@
 <script>
 (()=>{
 "use strict";
-const VERSION='2.0.0';   // 表示用
+const VERSION='2.1.0';   // 表示用
 const SCHEMA=3;          // データ構造の版。移行判定に使う
 const CHANGES=[
+  ['2.1.0','タイトル・サークル・年・あらすじをあとから直せるように。'],
   ['2.0.0','画像をまとめて読み込んで一括登録できるように。ファイル名からタイトルを起こし、既存作品への自動割り当てにも対応。'],
   ['1.9.0','同人の棚を横長の枠に変更。1行2列で大きく表示。'],
   ['1.8.1','評価と状態の線が表紙の下に隠れていた不具合を修正。'],
@@ -812,6 +815,45 @@ function makeNumberedEpisodes(n){
 const epLabel=(e,multi)=> (multi?e.s+'-'+e.n : '第'+e.n+'話');
 const epText=(e,multi)=> (multi?`S${e.s} 第${e.n}話` : `第${e.n}話`)+(e.title?'　'+e.title:'');
 
+
+/* ---------- タイトルなどをあとから直す ---------- */
+function openInfoEditor(id){
+  const w=works.find(x=>x.id===id); if(!w) return;
+  openSheet('情報を直す',`
+    <label class="f" style="margin-top:0">タイトル</label>
+    <textarea class="in" id="ieTitle" style="min-height:62px">${esc(w.title)}</textarea>
+
+    <label class="f">サークル・制作</label>
+    <input class="in" id="ieMaker" value="${esc(w.maker||'')}" placeholder="任意">
+
+    <label class="f">年</label>
+    <input class="in" id="ieYear" value="${esc(w.year||'')}" inputmode="numeric" placeholder="2025">
+
+    <label class="f">あらすじ</label>
+    <textarea class="in" id="ieSyn" placeholder="任意">${esc(w.synopsis||'')}</textarea>
+
+    <label class="f" style="display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="ieAdult" ${w.adult?'checked':''} style="width:auto"> 伏せ字表示の対象にする</label>
+
+    <div class="divider"></div>
+    <button class="btn" id="ieSave">保存する</button>
+    <div style="height:8px"></div>
+    <button class="btn ghost" id="ieBack">やめて戻る</button>`);
+
+  $('#ieSave').onclick=async()=>{
+    const t=$('#ieTitle').value.trim();
+    if(!t){ toast('タイトルは空にできません'); return; }
+    w.title=t;
+    w.maker=$('#ieMaker').value.trim();
+    w.year=$('#ieYear').value.trim();
+    w.synopsis=$('#ieSyn').value.trim();
+    w.adult=$('#ieAdult').checked;
+    w.updatedAt=Date.now();
+    await saveWorks(); render(); openDetail(w.id); toast('保存しました');
+  };
+  $('#ieBack').onclick=()=>openDetail(w.id);
+}
+
 /* ---------- detail ---------- */
 async function openDetail(id){
   const w=works.find(x=>x.id===id); if(!w)return;
@@ -831,7 +873,9 @@ async function openDetail(id){
       `<button data-s="${k}" aria-pressed="${w.status===k}">${v}</button>`).join('')}</div>
 
     <div style="height:14px"></div>
-    <button class="btn ghost" id="editCover">表紙を変える</button>
+    <div class="row">
+      <button class="btn ghost" id="editInfo">情報を直す</button>
+      <button class="btn ghost" id="editCover">表紙を変える</button></div>
 
     <label class="f">分類</label>
     <div class="seg" id="catSeg">${Object.entries(CATS).map(([k,v])=>
@@ -1046,6 +1090,8 @@ async function openDetail(id){
     paintFlag(); await saveWorks(); render(); toast(STAT[w.status]);};
 
   $('#editCover').onclick=()=>openCoverEditor(w.id);
+  $('#editInfo').onclick=()=>openInfoEditor(w.id);
+  $('#ttlEdit').onclick=()=>openInfoEditor(w.id);
 
   $('#catSeg').onclick=async e=>{const b=e.target.closest('button');if(!b)return;
     w.cat=b.dataset.c; w.updatedAt=Date.now();
