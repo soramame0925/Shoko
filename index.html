@@ -242,9 +242,12 @@
 <script>
 (()=>{
 "use strict";
-const VERSION='1.0.0';   // 表示用
+const VERSION='1.3.0';   // 表示用
 const SCHEMA=3;          // データ構造の版。移行判定に使う
 const CHANGES=[
+  ['1.3.0','まとめて削除を追加。直前の取り込みの取り消し、絞り込み範囲の削除、全削除。'],
+  ['1.2.0','SakuLog の書き出しを自動判別して、表紙・総評・話数メモごと取り込めるように。'],
+  ['1.1.0','ほかのアプリの JSON / CSV を、列を対応づけて取り込めるように。'],
   ['1.0.0','GitHub 公開版。端末内保存（IndexedDB）に移行。ホーム画面へのインストール、共有メニューからの追加、バックアップの促しを追加。'],
   ['0.5.1','設定に接続チェックを追加。'],
   ['0.5.0','アニメ検索が AniList 不通時に TMDB へ切り替わるように。分類の変更を追加。'],
@@ -260,7 +263,7 @@ const STAT={
   paused:'一時中断', dropped:'見るのをやめた'
 };
 const RATE=['','合わなかった','いまひとつ','良かった','とても良い','忘れたくない'];
-let works=[], settings={tmdbKey:'',safe:false,lastExport:0,backupHiddenUntil:0}, filter={cat:'all',stat:'all',q:''};
+let works=[], settings={tmdbKey:'',safe:false,lastExport:0,backupHiddenUntil:0,lastImport:null}, filter={cat:'all',stat:'all',q:''};
 const imgCache=new Map();
 const $=s=>document.querySelector(s), el=(t,c)=>{const e=document.createElement(t);if(c)e.className=c;return e;};
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
@@ -820,6 +823,331 @@ async function openDetail(id){
     closeSheet(); render(); toast('「'+w.title+'」を書庫から外しました');};
 }
 
+
+/* ---------- ほかのアプリからの取り込み ---------- */
+function parseCSV(text){
+  const rows=[]; let row=[], cell='', q=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(q){
+      if(c==='"'){ if(text[i+1]==='"'){cell+='"';i++;} else q=false; }
+      else cell+=c;
+    }else{
+      if(c==='"') q=true;
+      else if(c===',') { row.push(cell); cell=''; }
+      else if(c==='\n'){ row.push(cell); cell=''; rows.push(row); row=[]; }
+      else if(c!=='\r') cell+=c;
+    }
+  }
+  if(cell.length||row.length){ row.push(cell); rows.push(row); }
+  return rows.filter(r=>r.some(x=>String(x).trim()!==''));
+}
+function rowsToObjects(rows){
+  if(rows.length<2) return [];
+  const head=rows[0].map(h=>String(h).trim());
+  return rows.slice(1).map(r=>{
+    const o={}; head.forEach((h,i)=>{ if(h) o[h]=r[i]??''; }); return o;
+  });
+}
+// 入れ子の JSON でも配列を探し出す
+function findRecordArray(data){
+  if(Array.isArray(data)) return data;
+  if(data && typeof data==='object'){
+    for(const k of ['works','items','records','data','rows','list','entries','Sheet1']){
+      if(Array.isArray(data[k])) return data[k];
+    }
+    for(const v of Object.values(data)) if(Array.isArray(v)&&v.length&&typeof v[0]==='object') return v;
+  }
+  return [];
+}
+const GUESS={
+  title:[/^title$/i,/title/i,/^name$/i,/name/i,/タイトル/,/作品名/,/作品/,/題名/],
+  cover:[/cover/i,/image/i,/poster/i,/thumb/i,/picture/i,/画像/,/表紙/,/サムネ/,/ジャケ/],
+  review:[/review/i,/comment/i,/^note/i,/memo/i,/impress/i,/感想/,/総評/,/メモ/,/レビュー/],
+  status:[/status/i,/state/i,/watched/i,/状態/,/ステータス/,/視聴状況/,/進捗/],
+  rating:[/rating/i,/score/i,/star/i,/評価/,/点数/,/星/],
+  year:[/year/i,/release/i,/公開/,/放送/,/発売/,/^年/,/日付/,/date/i],
+  maker:[/maker/i,/circle/i,/studio/i,/author/i,/creator/i,/brand/i,/サークル/,/制作/,/作者/,/メーカー/],
+  cat:[/categor/i,/^type$/i,/genre/i,/media/i,/分類/,/種別/,/媒体/,/ジャンル/]
+};
+function guessColumn(cols,field){
+  for(const re of GUESS[field]||[]) { const hit=cols.find(c=>re.test(c)); if(hit) return hit; }
+  return '';
+}
+function guessStatus(v){
+  const s=String(v??'').toLowerCase();
+  if(/見た|観た|視聴済|完了|済|done|watched|complete|finish/.test(s)) return 'done';
+  if(/見てる|見中|視聴中|途中|watching|progress|reading/.test(s))     return 'watching';
+  if(/中断|保留|paused|hold/.test(s))                                  return 'paused';
+  if(/やめ|中止|drop|stop/.test(s))                                    return 'dropped';
+  return 'want';
+}
+function guessCat(v,fallback){
+  const s=String(v??'').toLowerCase();
+  if(/映画|movie|film|劇場/.test(s))            return 'movie';
+  if(/ドラマ|drama|tv|海外|連続/.test(s))       return 'drama';
+  if(/アニメ|anime|animation/.test(s))          return 'anime';
+  if(/同人|doujin|dojin|音声|asmr|cg集|同人誌/.test(s)) return 'doujin';
+  return fallback;
+}
+function normRating(v){
+  const n=parseFloat(String(v??'').replace(/[^0-9.]/g,''));
+  if(!isFinite(n)||n<=0) return 0;
+  return Math.max(1,Math.min(5, n>5? Math.round(n/2) : Math.round(n)));
+}
+function normYear(v){
+  const m=String(v??'').match(/(19|20)\d{2}/); return m? m[0] : '';
+}
+
+
+/* ---------- SakuLog（TMDB 生データ形式）からの取り込み ---------- */
+function looksLikeSakuLog(arr){
+  if(!Array.isArray(arr)||!arr.length) return false;
+  const hit=arr.filter(r=>r&&typeof r==='object'&&'media_type' in r&&'status' in r
+    &&('poster_path' in r||'overview' in r)).length;
+  return hit >= Math.max(1, Math.floor(arr.length*0.6));
+}
+const msToYMD = ms=>{
+  const d=new Date(Number(ms));
+  if(isNaN(d.getTime())) return today();
+  return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);
+};
+const SAKU_STATUS={watched:'done',watching:'watching',planned:'want',
+  paused:'paused',dropped:'dropped',want:'want',plan_to_watch:'want'};
+
+function openSakuLogImport(arr){
+  const anim = arr.filter(r=>(r.genre_ids||[]).includes(16)).length;
+  const tv   = arr.filter(r=>r.media_type==='tv').length;
+  const notes= arr.reduce((n,r)=>n+(r.episodeNotes?.length||0),0);
+  const revs = arr.filter(r=>String(r.review||'').trim()).length;
+
+  openSheet('SakuLog から取り込む',`
+    <div class="hint" style="margin-top:0">前のアプリの書き出しと判断しました。
+      <b>${arr.length}件</b>（うちアニメ ${anim}件 / TVシリーズ ${tv}件）。
+      表紙・あらすじ・評価・総評・話数ごとのメモまで、そのまま引き継げます。</div>
+
+    <label class="f">アニメ映画の扱い</label>
+    <div class="seg" id="animeMovie">
+      <button data-v="anime" aria-pressed="true">アニメに入れる</button>
+      <button data-v="movie">映画に入れる</button></div>
+    <div class="hint">劇場版など、アニメーション作品の映画をどちらの棚に置くか。あとから個別に変えられます。</div>
+
+    <label class="f">引き継がれるもの</label>
+    <div class="hint" style="margin-top:0;line-height:2">
+      ・表紙とあらすじ（TMDB から復元）<br>
+      ・視聴状態（watched → 見た、planned → これから、watching → 見てる）<br>
+      ・評価 ${revs?'':''}（小数は四捨五入して 5 段階に）<br>
+      ・総評 ${revs}件、話数ごとのメモ ${notes}件<br>
+      ・感情タグの絵文字は総評の末尾に添えます
+    </div>
+
+    <div class="divider"></div>
+    <button class="btn" id="doSaku">${arr.length}件を取り込む</button>
+    <div class="hint">同じ作品が既にあれば飛ばします。何度実行しても重複しません。</div>
+    <div style="height:10px"></div>
+    <button class="btn ghost" id="toMapper">列を自分で対応づける</button>
+  `);
+
+  $('#animeMovie').onclick=e=>{const b=e.target.closest('button');if(!b)return;
+    [...$('#animeMovie').children].forEach(x=>x.setAttribute('aria-pressed',x===b));};
+  $('#toMapper').onclick=()=>openImportMapper(arr,'JSON');
+
+  $('#doSaku').onclick=async()=>{
+    const batch='b'+Date.now();
+    const animeMovieAs=$('#animeMovie').querySelector('[aria-pressed="true"]').dataset.v;
+    const have=new Set(works.map(w=>w.source).filter(x=>x&&x!=='manual'&&x!=='import'));
+    let added=0,skipped=0;
+
+    for(const r of arr){
+      const title=(r.title||r.name||r.original_title||r.original_name||'').trim();
+      if(!title) continue;
+      const src = r.id? 'tmdb:'+r.id : '';
+      const dupKey = src+'|'+r.media_type;
+      if(src && have.has(dupKey)){ skipped++; continue; }
+      if(src) have.add(dupKey);
+
+      const isAnim=(r.genre_ids||[]).includes(16);
+      const cat = isAnim ? (r.media_type==='movie' && animeMovieAs==='movie' ? 'movie' : 'anime')
+                         : (r.media_type==='movie' ? 'movie' : 'drama');
+
+      // 話数メモを記録に変換
+      const logs=(r.episodeNotes||[]).map(n=>({
+        id:uid(), date:msToYMD(n.date), ep:'第'+n.episode+'話',
+        epKey:'1-'+n.episode, body:String(n.note||'').trim()
+      })).filter(l=>l.body);
+      if(String(r.episodeNote||'').trim())
+        logs.push({id:uid(),date:msToYMD(r.addedAt),ep:'',epKey:'',body:String(r.episodeNote).trim()});
+
+      // 話数の枠：メモが指す最大話数と currentEpisode の大きいほう
+      const maxEp=Math.max(0, Number(r.currentEpisode)||0,
+        ...(r.episodeNotes||[]).map(n=>Number(n.episode)||0));
+      const episodes = (r.media_type==='tv' && maxEp>0) ? makeNumberedEpisodes(maxEp) : [];
+
+      let review=String(r.review||'').trim();
+      const tags=(r.emotionTags||[]).join('');
+      if(tags) review = review ? review+'\n\n'+tags : tags;
+
+      const rate=Number(r.rating)||0;
+      works.push({
+        id:uid(), batch, cat, title,
+        maker:'', year:String(r.release_date||r.first_air_date||'').slice(0,4),
+        cover: r.poster_path? 'https://image.tmdb.org/t/p/w342'+r.poster_path : '',
+        synopsis:String(r.overview||'').trim(),
+        source: src||'import',
+        status: SAKU_STATUS[String(r.status||'').toLowerCase()] || 'want',
+        rating: rate>0? Math.max(1,Math.min(5,Math.round(rate))) : 0,
+        review, reviewAt: review? msToYMD(r.addedAt) : '',
+        adult: !!(r.adult || r.softcore),
+        logs, episodes,
+        createdAt: Number(r.addedAt)||Date.now(),
+        updatedAt: Number(r.addedAt)||Date.now()
+      });
+      added++;
+    }
+    settings.lastImport = added? {batch,count:added,at:Date.now(),label:'SakuLog'} : settings.lastImport;
+    await saveWorks(); await saveSettings(); closeSheet(); render();
+    toast(added+'件を取り込みました'+(skipped?'（'+skipped+'件は重複）':''));
+  };
+}
+
+function openImportMapper(records,label){
+  const cols=[...new Set(records.flatMap(r=>Object.keys(r||{})))];
+  if(!cols.length){ toast('列が読み取れませんでした'); return; }
+  const F=[
+    ['title','タイトル','必須'],
+    ['cat','分類','映画 / ドラマ / アニメ / 同人'],
+    ['status','状態','見た・見たい など'],
+    ['rating','評価','5段階でも10段階でも可'],
+    ['review','総評・感想',''],
+    ['cover','表紙の画像URL',''],
+    ['maker','サークル・制作',''],
+    ['year','年','']
+  ];
+  const opt=sel=>['<option value="">— 使わない —</option>']
+    .concat(cols.map(c=>`<option value="${esc(c)}"${c===sel?' selected':''}>${esc(c)}</option>`)).join('');
+
+  openSheet('取り込み：列の対応づけ',`
+    <div class="hint" style="margin-top:0">${esc(label)}から <b>${records.length}件</b> 読み込みました。
+      どの列がどこに入るかを決めてください。自動で推測した内容が入っています。</div>
+    ${F.map(([k,name,note])=>`
+      <label class="f">${name}${note?`<span style="color:#5A6472;font-family:var(--gothic);letter-spacing:0;margin-left:8px">${note}</span>`:''}</label>
+      <select class="in" id="map_${k}">${opt(guessColumn(cols,k))}</select>`).join('')}
+
+    <label class="f">分類が読み取れないときの既定</label>
+    <div class="seg" id="defCat">${Object.entries(CATS).map(([k,v],i)=>
+      `<button data-c="${k}" aria-pressed="${i===0}">${v}</button>`).join('')}</div>
+
+    <label class="f">伏せ字の扱い</label>
+    <div class="seg" id="defAdult">
+      <button data-a="auto" aria-pressed="true">同人だけ伏せる</button>
+      <button data-a="all">すべて伏せる</button>
+      <button data-a="none">伏せない</button></div>
+
+    <div class="divider"></div>
+    <div id="preview"></div>
+    <div style="height:12px"></div>
+    <button class="btn" id="doImport">この対応で取り込む</button>
+    <div class="hint">いまある記録はそのまま残り、追加されます。同じタイトルが既にある場合は飛ばします。</div>
+  `);
+
+  const getMap=()=>Object.fromEntries(F.map(([k])=>[k,$('#map_'+k).value]));
+  const defCat=()=>$('#defCat').querySelector('[aria-pressed="true"]').dataset.c;
+  const defAdult=()=>$('#defAdult').querySelector('[aria-pressed="true"]').dataset.a;
+
+  const build=()=>{
+    const m=getMap(), fb=defCat(), ad=defAdult();
+    return records.map(r=>{
+      const title=String(m.title? r[m.title]??'' : '').trim();
+      if(!title) return null;
+      const cat = m.cat? guessCat(r[m.cat],fb) : fb;
+      const cover=String(m.cover? r[m.cover]??'' : '').trim();
+      return {
+        title, cat,
+        status: m.status? guessStatus(r[m.status]) : 'want',
+        rating: m.rating? normRating(r[m.rating]) : 0,
+        review: String(m.review? r[m.review]??'' : '').trim(),
+        cover: /^https?:\/\//i.test(cover)? cover : '',
+        maker: String(m.maker? r[m.maker]??'' : '').trim(),
+        year: m.year? normYear(r[m.year]) : '',
+        adult: ad==='all'? true : ad==='none'? false : cat==='doujin'
+      };
+    }).filter(Boolean);
+  };
+  const paintPreview=()=>{
+    const built=build();
+    const box=$('#preview');
+    if(!built.length){ box.innerHTML='<div class="hint" style="color:var(--seal)">タイトルの列を選んでください。</div>'; return; }
+    const withCover=built.filter(b=>b.cover).length;
+    box.innerHTML=`<div class="sectitle">確認<span>最初の3件</span></div>`
+      + built.slice(0,3).map(b=>`<div style="font-size:12.5px;line-height:1.7;padding:5px 0;border-bottom:1px solid var(--line)">
+          <b style="font-weight:400">${esc(b.title)}</b>
+          <div style="color:var(--paper-dim);font-size:11px">${esc(CATS[b.cat])} · ${esc(({want:'これから',watching:'見てる',done:'見た',paused:'中断',dropped:'やめた'})[b.status])}${b.rating?' · ★'+b.rating:''}${b.year?' · '+esc(b.year):''}${b.cover?' · 表紙あり':''}</div>
+          ${b.review?`<div style="color:#6C7686;font-size:11px;margin-top:2px">${esc(b.review.slice(0,50))}${b.review.length>50?'…':''}</div>`:''}
+        </div>`).join('')
+      + `<div class="hint">取り込む件数 ${built.length} 件　表紙の付くもの ${withCover} 件</div>`;
+  };
+  F.forEach(([k])=>$('#map_'+k).onchange=paintPreview);
+  $('#defCat').onclick=e=>{const b=e.target.closest('button');if(!b)return;
+    [...$('#defCat').children].forEach(x=>x.setAttribute('aria-pressed',x===b));paintPreview();};
+  $('#defAdult').onclick=e=>{const b=e.target.closest('button');if(!b)return;
+    [...$('#defAdult').children].forEach(x=>x.setAttribute('aria-pressed',x===b));paintPreview();};
+  paintPreview();
+
+  $('#doImport').onclick=async()=>{
+    const batch='b'+Date.now();
+    const built=build();
+    if(!built.length){ toast('タイトルの列を選んでください'); return; }
+    const have=new Set(works.map(w=>w.title.trim().toLowerCase()));
+    let added=0, skipped=0;
+    for(const b of built){
+      if(have.has(b.title.toLowerCase())){ skipped++; continue; }
+      have.add(b.title.toLowerCase());
+      works.push({ id:uid(), batch, cat:b.cat, title:b.title, maker:b.maker, year:b.year,
+        cover:b.cover, synopsis:'', source:'import', status:b.status, rating:b.rating,
+        review:b.review, reviewAt: b.review? today() : '', adult:b.adult,
+        logs:[], episodes:[], createdAt:Date.now(), updatedAt:Date.now() });
+      added++;
+    }
+    settings.lastImport = added? {batch,count:added,at:Date.now(),label:'ファイル'} : settings.lastImport;
+    await saveWorks(); await saveSettings(); closeSheet(); render();
+    toast(added+'件を取り込みました'+(skipped?'（'+skipped+'件は重複のため飛ばしました）':''));
+  };
+}
+
+async function readImportFile(file){
+  const text=await file.text();
+  const name=(file.name||'').toLowerCase();
+  try{
+    if(name.endsWith('.csv')||name.endsWith('.tsv')||(!name.endsWith('.json')&&text.includes(','))){
+      const rows=parseCSV(text);
+      const objs=rowsToObjects(rows);
+      if(!objs.length) throw new Error('中身が読み取れませんでした');
+      openImportMapper(objs,'CSV');
+      return;
+    }
+    const data=JSON.parse(text);
+    // 書庫が書き出した形式ならそのまま復元する
+    if(data && data.app==='shoko' && Array.isArray(data.works)){ await restoreOwnBackup(data.works); return; }
+    const arr=findRecordArray(data);
+    if(!arr.length) throw new Error('作品の配列が見つかりませんでした');
+    if(looksLikeSakuLog(arr)){ openSakuLogImport(arr); return; }
+    openImportMapper(arr,'JSON');
+  }catch(e){
+    toast(e.message||'このファイルは読み込めませんでした');
+  }
+}
+async function restoreOwnBackup(arr){
+  const batch='b'+Date.now();
+  for(const w of arr){
+    const id=uid();
+    if(w.imageData){ await sset('shoko:img:'+id,w.imageData); imgCache.set(id,w.imageData); w.cover='local:'+id; }
+    delete w.imageData;
+    works.push({...w,id,batch,logs:w.logs||[],review:w.review||'',episodes:w.episodes||[],updatedAt:w.updatedAt||Date.now()});
+  }
+  settings.lastImport={batch,count:arr.length,at:Date.now(),label:'バックアップ'};
+  await saveWorks(); await saveSettings(); closeSheet(); render(); toast(arr.length+'件を復元しました');
+}
+
 /* ---------- settings ---------- */
 function openSettings(){
   openSheet('設定',`
@@ -836,9 +1164,22 @@ function openSettings(){
     <div style="height:10px"></div>
     <button class="btn ghost" id="exp">JSON で書き出す（${works.length}件）</button>
     <div style="height:8px"></div>
-    <button class="btn ghost" id="impBtn">JSON から読み込む</button>
-    <input type="file" id="imp" accept="application/json" style="display:none">
+    <button class="btn ghost" id="impBtn">書庫のバックアップを読み込む</button>
     <div class="hint">書き出しには手で入れた表紙画像も含まれます。読み込みは既存データに追加されます。</div>
+    <div style="height:14px"></div>
+    <button class="btn ghost" id="impOther">ほかのアプリから取り込む（JSON / CSV）</button>
+    <input type="file" id="imp" accept=".json,.csv,.tsv,application/json,text/csv" style="display:none">
+    <div class="hint">AppSheet はスプレッドシートを CSV で書き出せば取り込めます。
+      どの列が何なのかは、次の画面で対応づけます。</div>
+    <div class="divider"></div>
+    <label class="f" style="margin-top:0">まとめて消す</label>
+    <div class="hint" style="margin-top:0">消したものは戻せません。心配なら先に書き出しておいてください。</div>
+    <div style="height:10px"></div>
+    <div id="undoWrap"></div>
+    <button class="btn danger" id="wipeFiltered"></button>
+    <div style="height:8px"></div>
+    <button class="btn danger" id="wipeAll">すべての作品を削除（${works.length}件）</button>
+
     <div class="divider"></div>
     <label class="f" style="margin-top:0">このアプリについて</label>
     <div class="hint" style="margin-top:0">書庫 v${VERSION}（データ構造 v${SCHEMA}）</div>
@@ -848,6 +1189,60 @@ function openSettings(){
       font-family:var(--mincho)">${v}</span><span>${esc(t)}</span></div>`).join('')}`);
   $('#tkSave').onclick=async()=>{settings.tmdbKey=$('#tk').value.trim();await saveSettings();
     toast(settings.tmdbKey?'キーを保存しました':'キーを空にしました');};
+
+  // 二度押しで実行する削除ボタン
+  function arm(btn,label,run){
+    let armed=false,t;
+    btn.onclick=async()=>{
+      if(!armed){ armed=true; btn.classList.add('armed');
+        btn.textContent='もう一度押すと削除します';
+        t=setTimeout(()=>{armed=false;btn.classList.remove('armed');btn.textContent=label;},4000);
+        return; }
+      clearTimeout(t); await run();
+    };
+    btn.textContent=label;
+  }
+  async function removeWorks(list){
+    const ids=new Set(list.map(w=>w.id));
+    for(const w of list) if(String(w.cover||'').startsWith('local:')){ await sdel('shoko:img:'+w.id); imgCache.delete(w.id); }
+    works=works.filter(w=>!ids.has(w.id));
+    await saveWorks();
+  }
+
+  // 直前の取り込みだけ取り消す
+  const li=settings.lastImport;
+  const liList = li? works.filter(w=>w.batch===li.batch) : [];
+  if(liList.length){
+    const b=el('button','btn danger'); b.id='undoImport';
+    b.style.marginBottom='8px';
+    $('#undoWrap').appendChild(b);
+    arm(b,'直前の取り込みを取り消す（'+liList.length+'件・'+li.label+'）',async()=>{
+      await removeWorks(liList);
+      settings.lastImport=null; await saveSettings();
+      closeSheet(); render(); paintBackupBar(); toast(liList.length+'件を取り消しました');
+    });
+  }
+
+  // いま絞り込んでいる範囲だけ消す
+  const fb=$('#wipeFiltered');
+  const scoped = works.filter(w=>(filter.cat==='all'||w.cat===filter.cat)&&(filter.stat==='all'||w.status===filter.stat));
+  if(filter.cat==='all'&&filter.stat==='all'){ fb.style.display='none'; }
+  else{
+    const names=[filter.cat==='all'?null:CATS[filter.cat],
+                 filter.stat==='all'?null:STAT[filter.stat]].filter(Boolean).join(' / ');
+    arm(fb,'絞り込み中のものを削除（'+names+'・'+scoped.length+'件）',async()=>{
+      await removeWorks(scoped); closeSheet(); render(); paintBackupBar();
+      toast(scoped.length+'件を削除しました');
+    });
+  }
+
+  // 全消し
+  arm($('#wipeAll'),'すべての作品を削除（'+works.length+'件）',async()=>{
+    const n=works.length;
+    await removeWorks([...works]);
+    settings.lastImport=null; await saveSettings();
+    closeSheet(); render(); paintBackupBar(); toast(n+'件すべて削除しました');
+  });
 
   $('#diag').onclick=async()=>{
     const out=$('#diagOut');
@@ -890,18 +1285,11 @@ function openSettings(){
     a.download='shoko-'+today()+'.json';a.click();URL.revokeObjectURL(a.href);
     settings.lastExport=Date.now(); settings.backupHiddenUntil=0;
     await saveSettings(); paintBackupBar(); toast('書き出しました');};
-  $('#impBtn').onclick=()=>$('#imp').click();
+  $('#impBtn').onclick=()=>{$('#imp').dataset.mode='own';$('#imp').click();};
+  $('#impOther').onclick=()=>{$('#imp').dataset.mode='other';$('#imp').click();};
   $('#imp').onchange=async e=>{
-    const f=e.target.files[0]; if(!f)return;
-    try{
-      const d=JSON.parse(await f.text()); const arr=Array.isArray(d)?d:d.works;
-      if(!Array.isArray(arr)) throw new Error();
-      for(const w of arr){const id=uid();
-        if(w.imageData){await sset('shoko:img:'+id,w.imageData);imgCache.set(id,w.imageData);w.cover='local:'+id;}
-        delete w.imageData;
-        works.push({...w,id,logs:w.logs||[],review:w.review||'',episodes:w.episodes||[],updatedAt:w.updatedAt||Date.now()});}
-      await saveWorks(); closeSheet(); render(); toast(arr.length+'件を読み込みました');
-    }catch(err){toast('このファイルは読み込めませんでした');}};
+    const f=e.target.files[0]; e.target.value=''; if(!f)return;
+    await readImportFile(f);};
 }
 
 /* ---------- wiring ---------- */
