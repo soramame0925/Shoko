@@ -42,11 +42,13 @@
   .searchbar input::placeholder{color:#5D6675}
 
   /* 状態タブ：一番上、いちばん目立つ場所に */
-  .statbar{display:flex;gap:5px;overflow-x:auto;margin-top:11px;scrollbar-width:none}
+  /* 状態タブ：大きめ・押しやすく */
+  .statbar{display:flex;gap:6px;overflow-x:auto;margin-top:12px;scrollbar-width:none;padding-bottom:2px}
   .statbar::-webkit-scrollbar{display:none}
-  .statbar button{flex:0 0 auto;padding:7px 12px;border-radius:var(--r);font-size:13px;
-                  color:var(--paper-dim);border:1px solid var(--line);display:flex;gap:6px;align-items:center}
-  .statbar button b{font-weight:400;font-size:11px;opacity:.65}
+  .statbar button{flex:0 0 auto;padding:11px 16px;border-radius:var(--r);font-size:14px;
+                  color:var(--paper-dim);border:1px solid var(--line);display:flex;gap:7px;align-items:baseline;
+                  min-height:44px;line-height:1.2}
+  .statbar button b{font-weight:400;font-size:11.5px;opacity:.65}
   .statbar button[aria-pressed="true"]{color:var(--ink);font-weight:700;border-color:transparent}
   .statbar button[aria-pressed="true"] b{opacity:.75}
   .statbar button[data-s="all"][aria-pressed="true"]{background:var(--paper)}
@@ -56,10 +58,12 @@
   .statbar button[data-s="paused"][aria-pressed="true"]{background:var(--panel-2);color:var(--paper)}
   .statbar button[data-s="dropped"][aria-pressed="true"]{background:var(--seal);color:var(--paper)}
 
-  .catbar{display:flex;gap:14px;overflow-x:auto;padding:9px 0 8px;scrollbar-width:none}
-  .catbar::-webkit-scrollbar{display:none}
-  .catbar button{flex:0 0 auto;font-size:12.5px;color:#5D6675;padding:1px 0 4px;border-bottom:1.5px solid transparent}
+  .catbar{display:flex;gap:4px;align-items:center;padding:10px 0 9px}
+  .catbar button{flex:0 0 auto;font-size:14px;color:#5D6675;padding:9px 12px;min-height:44px;
+                 border-bottom:2px solid transparent;border-radius:2px}
   .catbar button[aria-pressed="true"]{color:var(--paper);border-bottom-color:var(--brass)}
+  .catbar button.apart{border:1px solid var(--line);border-radius:999px;padding:8px 16px;font-size:13px}
+  .catbar button.apart[aria-pressed="true"]{border-color:var(--brass);color:var(--brass);background:rgba(200,164,93,.09)}
 
   .recall{margin:12px 0 2px;border:1px solid var(--line);border-left:2px solid var(--brass);
           background:var(--panel);border-radius:var(--r);padding:11px 12px;display:flex;gap:11px;align-items:center;width:100%}
@@ -72,22 +76,28 @@
   .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
   @media(min-width:520px){.grid{grid-template-columns:repeat(4,1fr)}}
   @media(min-width:700px){.grid{grid-template-columns:repeat(5,1fr)}}
+
+  /* 表紙は隠さない。状態は明るさと下端の線で示す */
   .cover{position:relative;aspect-ratio:2/3;background:var(--panel-2);border-radius:2px;
          overflow:hidden;border:1px solid var(--line);display:block;width:100%}
-  .cover img{width:100%;height:100%;object-fit:cover;display:block}
+  .cover img{width:100%;height:100%;object-fit:cover;display:block;transition:filter .2s}
   .cover.blur img{filter:blur(13px) saturate(.5)}
   .cover .noimg{position:absolute;inset:0;display:grid;place-items:center;padding:8px;
                 font-family:var(--mincho);font-size:11.5px;color:#8A93A1;text-align:center;line-height:1.5}
-  /* 状態の帯 */
-  .flag{position:absolute;left:0;right:0;bottom:0;padding:4px 6px;font-size:11px;font-weight:700;
-        letter-spacing:.08em;text-align:center;line-height:1.3}
-  .flag.want{background:rgba(96,107,124,.94);color:#E9E3D5}
-  .flag.watching{background:rgba(200,164,93,.96);color:#0C1017}
-  .flag.done{background:rgba(79,138,110,.95);color:#0C1017}
-  .flag.paused{background:rgba(34,44,58,.95);color:#9BA3AF}
-  .flag.dropped{background:rgba(181,80,60,.94);color:#F3E8E4}
-  .rbadge{position:absolute;top:5px;left:5px;background:rgba(12,16,23,.82);border:1px solid var(--brass-dim);
-          color:var(--brass);font-size:10.5px;padding:1px 5px;border-radius:2px;letter-spacing:.03em}
+  .cover::after{content:'';position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--slate)}
+  .cover.st-watching::after{background:var(--brass)}
+  .cover.st-done::after{background:var(--jade)}
+  .cover.st-paused::after{background:repeating-linear-gradient(90deg,var(--slate) 0 5px,transparent 5px 10px)}
+  .cover.st-dropped::after{background:var(--seal)}
+  /* 未視聴は沈ませる。観たものだけが色を持つ */
+  .cover.st-want img{filter:brightness(.42) saturate(.55)}
+  .cover.st-paused img{filter:brightness(.55) saturate(.7)}
+  .cover.st-dropped img{filter:grayscale(1) brightness(.38)}
+  .cover.st-want.blur img,.cover.st-paused.blur img,.cover.st-dropped.blur img{filter:blur(13px) brightness(.45) saturate(.5)}
+  .rbadge{position:absolute;top:0;left:0;background:linear-gradient(135deg,rgba(12,16,23,.9) 55%,transparent 55%);
+          color:var(--brass);font-size:11px;padding:3px 12px 8px 5px;letter-spacing:.02em;line-height:1;font-weight:700}
+  .epbadge{position:absolute;bottom:9px;right:5px;background:rgba(12,16,23,.86);border:1px solid var(--brass-dim);
+           color:var(--brass);font-size:10.5px;padding:2px 6px;border-radius:2px;letter-spacing:.02em;font-weight:700}
 
   .empty{margin-top:56px;text-align:center;color:var(--paper-dim)}
   .empty .k{font-family:var(--mincho);font-size:34px;color:#2E3948;letter-spacing:.3em}
@@ -156,6 +166,13 @@
   .syn.open{max-height:none}
   .more{font-size:11px;color:var(--brass);margin-top:3px}
 
+  .mcover{aspect-ratio:2/3;max-width:120px;margin:0 0 14px;border:1px solid var(--line);
+          border-radius:2px;background:var(--panel);position:relative;overflow:hidden;
+          display:grid;place-items:center}
+  .mcover img{width:100%;height:100%;object-fit:cover}
+  .mcover span{position:absolute;bottom:0;left:0;right:0;background:rgba(12,16,23,.85);
+               font-size:10px;color:var(--paper-dim);text-align:center;padding:3px}
+  .mcover>span:only-child{position:static;background:none;font-size:11px}
   .logbar{display:flex;gap:5px;align-items:center;margin-bottom:12px}
   .logbar button{border:1px solid var(--line);border-radius:var(--r);padding:5px 9px;
                  font-size:11.5px;color:var(--paper-dim);white-space:nowrap}
@@ -248,9 +265,10 @@
 <script>
 (()=>{
 "use strict";
-const VERSION='1.4.0';   // 表示用
+const VERSION='1.5.0';   // 表示用
 const SCHEMA=3;          // データ構造の版。移行判定に使う
 const CHANGES=[
+  ['1.5.0','同人を独立したタブに分離。表紙を隠さない表示に変更。タブを大きく。DLsite の作品番号から表紙を探せるように。'],
   ['1.4.0','記録を話数順に並べ替え。選んだ話の記録だけを表示できるように。'],
   ['1.3.0','まとめて削除を追加。直前の取り込みの取り消し、絞り込み範囲の削除、全削除。'],
   ['1.2.0','SakuLog の書き出しを自動判別して、表紙・総評・話数メモごと取り込めるように。'],
@@ -334,8 +352,10 @@ async function resolveCover(w){
 }
 
 /* ---------- filters ---------- */
+// 「ぜんぶ」には同人を含めない。同人は同人タブでのみ現れる。
+const inScope=(w,cat)=> cat==='all' ? w.cat!=='doujin' : w.cat===cat;
 function countBy(stat){
-  return works.filter(w=>(filter.cat==='all'||w.cat===filter.cat)&&(stat==='all'||w.status===stat)).length;
+  return works.filter(w=>inScope(w,filter.cat)&&(stat==='all'||w.status===stat)).length;
 }
 function buildBars(){
   const sb=$('#statbar'); sb.innerHTML='';
@@ -349,10 +369,12 @@ function buildBars(){
   add('done','見た'); add('paused','中断'); add('dropped','やめた');
 
   const cb=$('#catbar'); cb.innerHTML='';
-  const addc=(key,label)=>{const b=el('button');b.textContent=label;
+  const addc=(key,label,cls)=>{const b=el('button',cls);b.textContent=label;
     b.setAttribute('aria-pressed',filter.cat===key);
     b.onclick=()=>{filter.cat=key;buildBars();render();};cb.appendChild(b);};
-  addc('all','ぜんぶ'); Object.entries(CATS).forEach(([k,v])=>addc(k,v));
+  addc('all','ぜんぶ'); addc('movie','映画'); addc('drama','ドラマ'); addc('anime','アニメ');
+  const sp=el('span'); sp.style.cssText='flex:1'; cb.appendChild(sp);
+  addc('doujin','同人','apart');
 }
 
 /* ---------- render ---------- */
@@ -360,7 +382,7 @@ async function render(){
   buildBars();
   const q=filter.q.trim().toLowerCase();
   const list=works.filter(w=>
-    (filter.cat==='all'||w.cat===filter.cat)&&
+    inScope(w,filter.cat)&&
     (filter.stat==='all'||w.status===filter.stat)&&
     (!q||(w.title+' '+(w.maker||'')+' '+(w.review||'')).toLowerCase().includes(q))
   ).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
@@ -376,9 +398,10 @@ async function render(){
 }
 
 async function cardEl(w){
-  const b=el('button','cover'+(settings.safe&&w.adult?' blur':''));
+  const b=el('button','cover st-'+w.status+(settings.safe&&w.adult?' blur':''));
   const src=await resolveCover(w);
-  if(src){const im=el('img');im.src=src;im.alt=w.title;im.loading='lazy';b.appendChild(im);}
+  if(src){const im=el('img');im.src=src;im.alt=w.title;im.loading='lazy';
+    im.referrerPolicy='no-referrer';b.appendChild(im);}
   else{const n=el('div','noimg');n.textContent=w.title;b.appendChild(n);}
   if(w.rating){const r=el('div','rbadge');r.textContent='★'+w.rating;b.appendChild(r);}
   const eps=(w.episodes||[]).length;
@@ -387,8 +410,7 @@ async function cardEl(w){
     if(seen<eps || w.status==='watching'){
       const p=el('div','epbadge'); p.textContent=seen+'/'+eps; b.appendChild(p);}
   }
-  const f=el('div','flag '+w.status); f.textContent=({want:'これから',watching:'見てる',done:'見た',paused:'中断',dropped:'やめた'})[w.status];
-  b.appendChild(f);
+  b.title=w.title;
   b.onclick=()=>openDetail(w.id);
   return b;
 }
@@ -397,12 +419,14 @@ async function renderRecall(){
   const box=$('#recall'); box.innerHTML='';
   if(works.length<3) return;
   const md=today().slice(5), yr=new Date().getFullYear();
+  const pool0=works.filter(w=>inScope(w,filter.cat));
+  if(pool0.length<3) return;
   let pick=null,note='';
-  for(const w of works) for(const l of (w.logs||[])){
+  for(const w of pool0) for(const l of (w.logs||[])){
     if(l.date && l.date.slice(5)===md && +l.date.slice(0,4)<yr){
       pick=w; note=(yr-+l.date.slice(0,4))+'年前の今日、記録しています'; break;}}
   if(!pick){
-    const pool=works.filter(w=>w.status==='done'); if(!pool.length) return;
+    const pool=pool0.filter(w=>w.status==='done'); if(!pool.length) return;
     pick=pool[+today().replace(/-/g,'')%pool.length];
     const last=[...(pick.logs||[])].sort((a,b)=>(b.date||'').localeCompare(a.date||''))[0];
     note=last?.date?('最後の記録は '+last.date):'記録はまだありません';}
@@ -519,30 +543,106 @@ async function addFromApi(it){
   await saveWorks(); closeSheet(); render(); toast('「'+it.title+'」を「これから見る」に収めました');
 }
 
+function dlsiteCovers(code){
+  const m=/^\s*([A-Za-z]{2})?0*(\d+)\s*$/.exec(String(code||''));
+  if(!m) return [];
+  const pre=(m[1]||'RJ').toUpperCase(), n=parseInt(m[2],10);
+  if(!isFinite(n)||n<=0) return [];
+  const wide = m[2].replace(/^0+/,'').length>6 || n>=1000000;
+  const pad = v=>String(v).padStart(wide?8:6,'0');
+  const id=pre+pad(n), dir=pre+pad(Math.ceil((n+1)/1000)*1000);
+  const cat = /^(RJ|RE)$/.test(pre)? 'doujin' : 'professional';
+  const base=`https://img.dlsite.jp/modpub/images2/work/${cat}/${dir}`;
+  return [`${base}/${id}_img_main.jpg`,
+          `${base}/${id}_img_main.webp`,
+          `https://img.dlsite.jp/resize/images2/work/${cat}/${dir}/${id}_img_main_240x240.jpg`];
+}
+// 候補を順に読み込んでみて、最初に表示できたものを返す
+function firstLoadable(urls){
+  return new Promise(res=>{
+    let i=0;
+    const tryNext=()=>{
+      if(i>=urls.length) return res('');
+      const u=urls[i++], im=new Image();
+      im.referrerPolicy='no-referrer';
+      im.onload=()=>im.naturalWidth>1? res(u) : tryNext();
+      im.onerror=tryNext;
+      im.src=u;
+    };
+    tryNext();
+  });
+}
+
 function manualForm(){
-  return `<div class="hint">同人誌・同人音声・イベント本など、公開データベースに無いものはこちら。</div>
+  return `<div class="hint" style="margin-top:0">同人誌・同人音声・イベント本など、公開データベースに無いものはこちら。</div>
     <label class="f">分類</label>
     <div class="seg" id="mCat">${Object.keys(CATS).map(k=>
       `<button data-c="${k}" aria-pressed="${k==='doujin'}">${CATS[k]}</button>`).join('')}</div>
     <label class="f">タイトル</label><input class="in" id="mTitle" placeholder="必須">
     <label class="f">サークル・制作</label><input class="in" id="mMaker" placeholder="任意">
     <label class="f">年</label><input class="in" id="mYear" inputmode="numeric" placeholder="2025">
-    <label class="f">表紙</label>
-    <input class="in" id="mUrl" placeholder="画像URLを貼る" style="margin-bottom:8px">
+
+    <div class="divider"></div>
+    <div class="sectitle">表紙<span>やりやすい方法をひとつ</span></div>
+    <div class="mcover" id="mPreview"><span>まだ何も</span></div>
+
+    <label class="f">1. DLsite の作品番号から</label>
+    <div class="row"><input class="in" id="mRj" placeholder="RJ01234567" autocapitalize="characters">
+      <button class="btn ghost" id="mRjGo" style="flex:0 0 78px">試す</button></div>
+    <div class="hint">番号から表紙の場所を推測します。当たれば上に出ます。外れることもあります。</div>
+
+    <label class="f">2. 画像の URL を貼る</label>
+    <div class="row"><input class="in" id="mUrl" placeholder="https://…">
+      <button class="btn ghost" id="mUrlGo" style="flex:0 0 78px">試す</button></div>
+    <div class="hint">作品ページの画像を長押し →「画像リンクをコピー」で取れます。</div>
+
+    <label class="f">3. 端末の写真から</label>
     <input type="file" accept="image/*" id="mFile" class="in">
-    <div class="hint">端末の写真を選ぶと幅400pxに縮めて保存します。自分で撮った表紙でも大丈夫です。</div>
+    <div class="hint">実物を撮った写真やスクリーンショットでも。幅400pxに縮めて端末内に保存します。
+      外部に頼らないので、いちばん確実で消えません。</div>
+
     <label class="f" style="display:flex;align-items:center;gap:8px">
       <input type="checkbox" id="mAdult" checked style="width:auto"> 伏せ字表示の対象にする</label>
     <div style="height:20px"></div><button class="btn" id="mSave">収める</button>`;
 }
 function bindManual(){
+  let chosenUrl='', chosenData='';
+  const prev=()=>$('#mPreview');
+  const showPrev=(src,label)=>{
+    prev().innerHTML = src
+      ? `<img src="${esc(src)}" referrerpolicy="no-referrer" alt=""><span>${esc(label)}</span>`
+      : '<span>まだ何も</span>';
+  };
   $('#mCat').onclick=e=>{const b=e.target.closest('button');if(!b)return;
     [...$('#mCat').children].forEach(x=>x.setAttribute('aria-pressed',x===b));};
+
+  $('#mRjGo').onclick=async()=>{
+    const urls=dlsiteCovers($('#mRj').value);
+    if(!urls.length){toast('RJ番号を入れてください');return;}
+    prev().innerHTML='<span><span class="spin"></span> 探しています…</span>';
+    const hit=await firstLoadable(urls);
+    if(hit){ chosenUrl=hit; chosenData=''; showPrev(hit,'DLsite から'); }
+    else{ showPrev('',''); toast('見つかりませんでした。URL か写真で入れてください'); }
+  };
+  $('#mUrlGo').onclick=async()=>{
+    const u=$('#mUrl').value.trim();
+    if(!/^https?:\/\//i.test(u)){toast('http から始まる URL を入れてください');return;}
+    prev().innerHTML='<span><span class="spin"></span> 確認しています…</span>';
+    const hit=await firstLoadable([u]);
+    if(hit){ chosenUrl=hit; chosenData=''; showPrev(hit,'URL から'); }
+    else{ showPrev('',''); toast('この URL は表示できませんでした'); }
+  };
+  $('#mFile').onchange=async e=>{
+    const f=e.target.files[0]; if(!f)return;
+    chosenData=await shrink(f); chosenUrl='';
+    showPrev(chosenData,'端末内に保存');
+  };
+
   $('#mSave').onclick=async()=>{
     const title=$('#mTitle').value.trim(); if(!title){toast('タイトルを入れてください');return;}
     const cat=$('#mCat').querySelector('[aria-pressed="true"]').dataset.c;
-    const id=uid(); let cover=$('#mUrl').value.trim(); const f=$('#mFile').files[0];
-    if(f){const data=await shrink(f); await sset('shoko:img:'+id,data); imgCache.set(id,data); cover='local:'+id;}
+    const id=uid(); let cover=chosenUrl;
+    if(chosenData){ await sset('shoko:img:'+id,chosenData); imgCache.set(id,chosenData); cover='local:'+id; }
     works.unshift({id,cat,title,maker:$('#mMaker').value.trim(),year:$('#mYear').value.trim(),
       cover,synopsis:'',source:'manual',status:'want',rating:0,review:'',episodes:[],
       adult:$('#mAdult').checked,logs:[],createdAt:Date.now(),updatedAt:Date.now()});
@@ -1280,7 +1380,7 @@ function openSettings(){
 
   // いま絞り込んでいる範囲だけ消す
   const fb=$('#wipeFiltered');
-  const scoped = works.filter(w=>(filter.cat==='all'||w.cat===filter.cat)&&(filter.stat==='all'||w.status===filter.stat));
+  const scoped = works.filter(w=>inScope(w,filter.cat)&&(filter.stat==='all'||w.status===filter.stat));
   if(filter.cat==='all'&&filter.stat==='all'){ fb.style.display='none'; }
   else{
     const names=[filter.cat==='all'?null:CATS[filter.cat],
