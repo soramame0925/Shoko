@@ -157,6 +157,10 @@
   .rate{display:grid;grid-template-columns:repeat(6,1fr);gap:5px}
   .rate button{border:1px solid var(--line);border-radius:var(--r);padding:9px 2px;font-size:13px;color:var(--paper-dim)}
   .rate button[aria-pressed="true"]{background:var(--brass);color:var(--ink-deep);border-color:var(--brass);font-weight:700}
+  .review{font-family:var(--mincho);font-size:15px;line-height:2.05;white-space:pre-wrap;
+          color:var(--paper);background:var(--panel);border:1px solid var(--line);
+          border-left:2px solid var(--brass-dim);border-radius:var(--r);padding:15px 16px;
+          letter-spacing:.02em}
   .rateNote{font-size:12px;color:var(--paper-dim);margin-top:7px;min-height:1.5em}
 
   .res{display:flex;gap:11px;padding:10px 0;border-bottom:1px solid var(--line);text-align:left;width:100%;align-items:center}
@@ -279,9 +283,10 @@
 <script>
 (()=>{
 "use strict";
-const VERSION='2.1.1';   // 表示用
+const VERSION='2.2.0';   // 表示用
 const SCHEMA=3;          // データ構造の版。移行判定に使う
 const CHANGES=[
+  ['2.2.0','総評を書いたあとは読みやすい形で表示。「書き直す」で編集に戻れるように。'],
   ['2.1.1','詳細画面のボタンが反応しなくなっていた不具合を修正（総評の保存、あらすじの展開、分類・評価の変更、記録、削除）。'],
   ['2.1.0','タイトル・サークル・年・あらすじをあとから直せるように。'],
   ['2.0.0','画像をまとめて読み込んで一括登録できるように。ファイル名からタイトルを起こし、既存作品への自動割り当てにも対応。'],
@@ -894,10 +899,7 @@ async function openDetail(id){
 
     <div class="divider"></div>
     <div class="sectitle">総評<span>この作品にひとつ。書き直せます</span></div>
-    <textarea class="in" id="rvBody" placeholder="全部見終えたあと、この作品をどう思ったか。">${esc(w.review||'')}</textarea>
-    <div class="row" style="margin-top:9px;align-items:center">
-      <span class="hint" id="rvMeta" style="margin:0;flex:1"></span>
-      <button class="btn" id="rvSave" style="flex:0 0 110px">総評を保存</button></div>
+    <div id="rvBox"></div>
 
     <div class="divider"></div>
     <div class="sectitle">話数の記録<span>見るたびに増えていきます</span></div>
@@ -1083,7 +1085,6 @@ async function openDetail(id){
       box.appendChild(d);});
     const tot=(w.episodes||[]).length;
     $('#cnt').textContent = (w.review?'総評あり':'総評なし') + ' 　記録 '+ls.length+'件'+(tot?' / 全'+tot+'話':'');
-    $('#rvMeta').textContent = w.reviewAt ? ('最後に書いたのは '+w.reviewAt) : 'まだ書いていません';
   };
   paintFlag(); paintRate(); refresh(); paintEpisodes();
 
@@ -1105,12 +1106,35 @@ async function openDetail(id){
   $('#rate').onclick=async e=>{const b=e.target.closest('button');if(!b)return;
     w.rating=+b.dataset.v; w.updatedAt=Date.now(); paintRate(); await saveWorks(); render();};
 
-  $('#rvSave').onclick=async()=>{
-    const v=$('#rvBody').value.trim();
-    if(v===(w.review||'')){toast('変更はありません');return;}
-    w.review=v; w.reviewAt=today(); w.updatedAt=Date.now();
-    await saveWorks(); refresh(); render();
-    toast(v?'総評を保存しました':'総評を空にしました');};
+  // 総評：書いたあとは読みやすく表示し、押せば書き直せる
+  let editingReview=false;
+  const paintReview=()=>{
+    const box=$('#rvBox'); if(!box) return;
+    if(w.review && !editingReview){
+      box.innerHTML=`<div class="review">${esc(w.review)}</div>
+        <div class="row" style="margin-top:11px;align-items:center">
+          <span class="hint" style="margin:0;flex:1">${w.reviewAt?'最後に書いたのは '+esc(w.reviewAt):''}</span>
+          <button class="btn ghost" id="rvEdit" style="flex:0 0 96px">書き直す</button></div>`;
+      on('#rvEdit',()=>{ editingReview=true; paintReview();
+        const t=$('#rvBody'); if(t){ t.focus(); t.selectionStart=t.value.length; } });
+    }else{
+      box.innerHTML=`
+        <textarea class="in" id="rvBody" placeholder="全部見終えたあと、この作品をどう思ったか。">${esc(w.review||'')}</textarea>
+        <div class="row" style="margin-top:9px;align-items:center">
+          <span class="hint" style="margin:0;flex:1">${w.review?'書き直しています':'まだ書いていません'}</span>
+          ${w.review?'<button class="btn ghost" id="rvCancel" style="flex:0 0 78px">やめる</button>':''}
+          <button class="btn" id="rvSave" style="flex:0 0 96px">保存</button></div>`;
+      on('#rvCancel',()=>{ editingReview=false; paintReview(); });
+      on('#rvSave',async()=>{
+        const v=$('#rvBody').value.trim();
+        if(v===(w.review||'')){ editingReview=false; paintReview(); toast('変更はありません'); return; }
+        w.review=v; w.reviewAt=v? today() : ''; w.updatedAt=Date.now();
+        editingReview=false;
+        await saveWorks(); paintReview(); refresh(); render();
+        toast(v?'総評を保存しました':'総評を空にしました');});
+    }
+  };
+  paintReview();
 
   $('#lgSave').onclick=async()=>{
     const body=$('#lgBody').value.trim(), ep=$('#lgEp').value.trim();
