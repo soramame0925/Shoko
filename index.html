@@ -279,9 +279,10 @@
 <script>
 (()=>{
 "use strict";
-const VERSION='2.1.0';   // 表示用
+const VERSION='2.1.1';   // 表示用
 const SCHEMA=3;          // データ構造の版。移行判定に使う
 const CHANGES=[
+  ['2.1.1','詳細画面のボタンが反応しなくなっていた不具合を修正（総評の保存、あらすじの展開、分類・評価の変更、記録、削除）。'],
   ['2.1.0','タイトル・サークル・年・あらすじをあとから直せるように。'],
   ['2.0.0','画像をまとめて読み込んで一括登録できるように。ファイル名からタイトルを起こし、既存作品への自動割り当てにも対応。'],
   ['1.9.0','同人の棚を横長の枠に変更。1行2列で大きく表示。'],
@@ -312,6 +313,8 @@ const RATE=['','合わなかった','いまひとつ','良かった','とても�
 let works=[], settings={tmdbKey:'',safe:false,lastExport:0,backupHiddenUntil:0,lastImport:null}, filter={cat:'all',stat:'all',q:''};
 const imgCache=new Map();
 const $=s=>document.querySelector(s), el=(t,c)=>{const e=document.createElement(t);if(c)e.className=c;return e;};
+// 要素が無いときは黙って何もしない。1か所の欠落で画面全体が止まらないように。
+const on=(sel,fn)=>{const n=typeof sel==='string'?$(sel):sel; if(n) n.onclick=fn; return n;};
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const today=()=>new Date().toISOString().slice(0,10);
@@ -864,7 +867,7 @@ async function openDetail(id){
         ${src?`<img src="${esc(src)}" alt="">`:`<div class="noimg">${esc(w.title)}</div>`}
         <div class="flag ${w.status}" id="dFlag"></div></div></div>
       <div style="flex:1;min-width:0">
-        <h3>${esc(w.title)}</h3>
+        <h3 id="ttlEdit" class="editable">${esc(w.title)}</h3>
         <div class="meta">${esc([w.maker,w.year].filter(Boolean).join(' · ')||'—')}</div>
         <div class="meta" id="cnt" style="margin-top:6px"></div></div></div>
 
@@ -1089,9 +1092,9 @@ async function openDetail(id){
     [...$('#stSeg').children].forEach(x=>x.setAttribute('aria-pressed',x===b));
     paintFlag(); await saveWorks(); render(); toast(STAT[w.status]);};
 
-  $('#editCover').onclick=()=>openCoverEditor(w.id);
-  $('#editInfo').onclick=()=>openInfoEditor(w.id);
-  $('#ttlEdit').onclick=()=>openInfoEditor(w.id);
+  on('#editCover',()=>openCoverEditor(w.id));
+  on('#editInfo',()=>openInfoEditor(w.id));
+  on('#ttlEdit',()=>openInfoEditor(w.id));
 
   $('#catSeg').onclick=async e=>{const b=e.target.closest('button');if(!b)return;
     w.cat=b.dataset.c; w.updatedAt=Date.now();
@@ -1133,8 +1136,9 @@ async function openDetail(id){
     if(eps.length && selKey) toast('記録しました');
     else if(!eps.length) toast('記録しました');};
 
-  const syn=$('#syn'); if(syn) $('#synMore').onclick=e=>{syn.classList.toggle('open');
-    e.target.textContent=syn.classList.contains('open')?'閉じる':'続きを読む';};
+  const syn=$('#syn');
+  on('#synMore',e=>{ if(!syn) return; syn.classList.toggle('open');
+    e.target.textContent=syn.classList.contains('open')?'閉じる':'続きを読む';});
 
   // 二段階削除（confirm はこの環境で効かないため）
   let armed=false, armT;
